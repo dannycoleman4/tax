@@ -192,6 +192,12 @@ impl Prices {
         let p = match self.granularity {
             Granularity::D1 => {
                 let floor = datetime.date().and_hms(0, 0, 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                if !self.map.contains_key(asset) {
+                    dbg!(asset);
+                } else if !self.map[asset].contains_key(&floor) {
+                    dbg!(asset);
+                    dbg!(&floor);
+                }
                 self.map[asset][&floor]
             },
             Granularity::H1 => {

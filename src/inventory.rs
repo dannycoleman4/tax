@@ -135,6 +135,10 @@ impl Inventory {
     }
 
     pub fn apply_deltas(&mut self, deltas: &deltas::Deltas, quote_currency: &str, prices: &prices::Prices, method: InventoryMethod) -> (CapitalGainsSummary, String) {
+
+        let smallest_liquidity_deltas = smallet_by_pair(deltas);
+
+
         let mut link_only_short_term = 0.0;
         let mut link_only_long_term = 0.0;
 
@@ -160,7 +164,7 @@ impl Inventory {
 
             match delta.direction {
                 deltas::Direction::In => {
-                    let symbol = symbols::dealias(&delta.asset);
+                    let symbol = symbols::rename_asset(&delta);
 
                     income += deltas.index_income(index, quote_currency, &prices);
 
@@ -174,6 +178,11 @@ impl Inventory {
                     //     println!("{:#?}", delta);
                     // }
 
+                    if !self.0.contains_key(&symbol) {
+                        // dbg!(&symbol);
+                        self.0.insert(symbol.clone(), vec![]);
+                        
+                    }
                     if self.0[&symbol].len() == 1 && self.0[&symbol][0].qty < 0.0 {
                         // println!("neg acq_vec: {}, delta: {:?}", self.0[&symbol][0].qty, delta);
 
@@ -210,7 +219,7 @@ impl Inventory {
                     //}
  
 
-                    let symbol = symbols::dealias(&delta.asset);
+                    let symbol = symbols::rename_asset(&delta);
                     let total_revenue = deltas.index_revenue(index, quote_currency, &prices); 
 
                     let mut rem_qty = delta.qty;
@@ -222,7 +231,7 @@ impl Inventory {
 
                             while rem_qty > 0.0 {
                                 // println!("{}", rem_qty);
-                                let symbol = symbols::dealias(&delta.asset);
+                                let symbol = symbols::rename_asset(&delta);
                                 if self.0[&symbol].len() == 0 {
                                     // println!("adding neg acq delta: {:#?}, rem_qty: {}", delta, rem_qty);
                                     self.0.get_mut(&symbol).unwrap().push ( Lot {
@@ -239,6 +248,7 @@ impl Inventory {
                                     let removed = self.0.get_mut(&symbol).unwrap().remove(0);
                                     rem_qty -= removed.qty;
                                     removed_lots.push(removed);
+
                                 } else {
                                     // println!("less");
                                     let removed = self.0.get_mut(&symbol).unwrap()[0].remove_qty(rem_qty);
@@ -246,10 +256,13 @@ impl Inventory {
                                     assert!(rem_qty == 0.0);
                                     removed_lots.push(removed);
                                 }
+
+
+                                
                             }
                         },
                         InventoryMethod::Lifo => {
-                            let symbol = symbols::dealias(&delta.asset);
+                            let symbol = symbols::rename_asset(&delta);
                             while rem_qty > 0.0 {
 
 
@@ -285,7 +298,7 @@ impl Inventory {
                             }
                         }, 
                         InventoryMethod::Yipo => {
-                            let symbol = symbols::dealias(&delta.asset);
+                            let symbol = symbols::rename_asset(&delta);
                             while rem_qty > 0.0 {
 
 
@@ -340,6 +353,10 @@ impl Inventory {
                         }
                     }
 
+
+                    self.remove_empty_positions(&symbols::rename_asset(&delta), &smallest_liquidity_deltas); 
+
+
                     let mut rev = 0_f64;
 
                     for rem_acq in &removed_lots {
@@ -383,7 +400,9 @@ impl Inventory {
                             println!("{}", gain);
 
                             println!("disposition worth {} on {}", revenue, Utc.timestamp_millis(delta.timestamp as i64).to_string());
-                            println!("from: {} of {}", rem_acq.qty/delta.qty, delta.value(quote_currency, &prices));
+                            if !delta.asset.starts_with("UNI-V3-LIQUIDITY") {
+                                println!("from: {} of {}", rem_acq.qty/delta.qty, delta.value(quote_currency, &prices));
+                            }
                             println!("{:#?}", delta);
                         
                             // for c in &delta.linked_to {
@@ -442,6 +461,31 @@ impl Inventory {
 
     }
 
+    fn remove_empty_positions(&mut self, asset: &str, smallet_by_pair: &HashMap<String, f64>) {
+
+        if asset.starts_with("UNI-V3-LIQUIDITY") {
+            
+
+            let remove = if self.0[asset].len() == 0 {
+                true
+            } else if self.0[asset].len() == 1 {
+
+                let sym = uni_v3_pair_name(asset);
+                if self.0[asset][0].qty < smallet_by_pair[&sym] {
+                    true
+                } else {
+                    false
+                }
+            } else {
+                dbg!(&self.0[asset]);
+                panic!("");
+            };
+
+            if remove {
+                self.0.remove(asset);
+            }
+        }
+    }
 }
 
 
@@ -526,7 +570,7 @@ impl ConsolidatedInventory {
 
             match delta.direction {
                 deltas::Direction::In => {
-                    let symbol = symbols::dealias(&delta.asset);
+                    let symbol = symbols::rename_asset(&delta);
 
                     income += deltas.index_income(index, quote_currency, &prices);
 
@@ -550,7 +594,7 @@ impl ConsolidatedInventory {
                 },
                 deltas::Direction::Out => {
 
-                    let symbol = symbols::dealias(&delta.asset);
+                    let symbol = symbols::rename_asset(&delta);
                     let total_revenue = deltas.index_revenue(index, quote_currency, prices); 
 
                     let cost_basis = self.0[&symbol].cost_basis(delta.qty); 
@@ -594,4 +638,37 @@ impl ConsolidatedInventory {
         };
         (summary, events)
     }
+
 }
+
+fn smallet_by_pair(deltas: &deltas::Deltas) -> HashMap<String, f64> {
+
+    let mut smallet_by_pair: HashMap<String, f64> = HashMap::new();
+    for d in deltas.0.iter() {
+
+        if d.asset.starts_with("UNI-V3-LIQUIDITY") {
+
+            let sym = uni_v3_pair_name(&d.asset);
+
+            if smallet_by_pair.contains_key(&sym) {
+                if d.qty < smallet_by_pair[&sym] {
+                    *smallet_by_pair.get_mut(&sym).unwrap() = d.qty;
+                }
+            } else {
+                smallet_by_pair.insert(sym, d.qty);
+            };
+            
+        }
+    }
+    smallet_by_pair
+}
+
+fn uni_v3_pair_name(full_name: &str) -> String {
+    assert!(full_name.starts_with("UNI-V3-LIQUIDITY"));
+
+    let split: Vec<&str> = full_name.split("_").collect();
+    let sym = format!("{}-{}", split[1], split[2]);
+    sym
+
+}
+

@@ -1,4 +1,5 @@
 
+use crate::deltas;
 
 
 
@@ -18,15 +19,17 @@
 
 
 
-pub fn dealias (name: &str) -> String {
-    let symbol = if name == "WETH" {
+pub fn rename_asset (delta: &deltas::Delta) -> String {
+    let symbol = if &delta.asset == "WETH" {
         String::from("ETH")
-    } else if name == "WBTC" {
+    } else if &delta.asset == "WBTC" {
         String::from("BTC")
-    } else if name == "REPv2" {
+    } else if &delta.asset == "REPv2" {
         String::from("REP")
+    } else if delta.asset.starts_with("UNI-V3-LIQUIDITY") {
+        format!("{}:{}", delta.asset, delta.host.to_string())
     } else {
-        String::from(name)
+        String::from(&delta.asset)
     };
     symbol
 }

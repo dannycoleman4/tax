@@ -14,14 +14,14 @@ pub fn calculate(method: inventory::InventoryMethod) {
     inventory.add_asset("OP");
     inventory.add_asset("ETHW");
     // let mut inventory = inventory::Inventory::load("./2022/initial_inventory_us.json").unwrap();
-    let prices = prices::Prices::load("./2022/prices_USD.json").unwrap();
-    let mut deltas = deltas::Deltas::load("./2022/linked_deltas.json").unwrap();
+    let prices = prices::Prices::load("./data/2022/prices_USD.json").unwrap();
+    let mut deltas = deltas::Deltas::load("./data/2022/linked_deltas.json").unwrap();
     deltas.reassign_quote_fee_links("USD");
 
     let (summary, dispositions) = inventory.apply_deltas(&deltas, "USD", &prices, method);
     
     // summary.save("./2022/summary_us.json");
-    inventory.save("./2022/end_inventory_us.json");
+    inventory.save("./data/2022/end_inventory_us.json");
 
     check_end_inventory();
 
@@ -42,10 +42,10 @@ pub fn calculate(method: inventory::InventoryMethod) {
     report += "\n";
     println!("{}", report);
 
-    let fp = "./2022/all_dispositions_us.csv";
+    let fp = "./data/2022/all_dispositions_us.csv";
     std::fs::write(fp, dispositions);
 
-    let fp = "./2022/capital_gains_report_us.txt";
+    let fp = "./data/2022/capital_gains_report_us.txt";
     std::fs::write(fp, report);
 
 }
@@ -54,12 +54,12 @@ pub fn calculate(method: inventory::InventoryMethod) {
 pub fn load_initial_inventory_us() -> inventory::Inventory {
 
     let initial_balances = {
-        let data = std::fs::read_to_string("./2022/initial_balances.json").unwrap();
+        let data = std::fs::read_to_string("./data/2022/initial_balances.json").unwrap();
         let ib: HashMap<String, f64> = serde_json::from_str(&data).unwrap();
         ib
     };
 
-    let mut initial_inventory = inventory::Inventory::load("./2021/end_inventory_us.json").unwrap();
+    let mut initial_inventory = inventory::Inventory::load("./data/2021/end_inventory_us.json").unwrap();
 
 
     for (asset_id, acq_vec) in &initial_inventory.0 {
@@ -93,12 +93,12 @@ pub fn load_initial_inventory_us() -> inventory::Inventory {
 pub fn check_end_inventory() {
 
     let initial_balances = {
-        let data = std::fs::read_to_string("./2022/end_balances.json").unwrap();
+        let data = std::fs::read_to_string("./data/2022/end_balances.json").unwrap();
         let ib: HashMap<String, f64> = serde_json::from_str(&data).unwrap();
         ib
     };
 
-    let mut end_inventory_us = inventory::Inventory::load("./2022/end_inventory_us.json").unwrap();
+    let mut end_inventory_us = inventory::Inventory::load("./data/2022/end_inventory_us.json").unwrap();
 
 
     for (asset_id, acq_vec) in &end_inventory_us.0 {
@@ -129,7 +129,7 @@ pub fn check_end_inventory() {
 }
 
 pub fn save_USD_prices() {
-    let deltas = deltas::Deltas::load("./2022/unlinked_deltas.json").unwrap();
+    let deltas = deltas::Deltas::load("./data/2022/unlinked_deltas.json").unwrap();
 
 
     let used_assets = deltas.used_assets();
@@ -140,12 +140,12 @@ pub fn save_USD_prices() {
     // let mut prices = prices::Prices::load_dir_candles("/home/dwc/code/coinbase/candles/2022/900", "USD", &used_assets).unwrap();
     let other_prices = prices::Prices::load_dir("/home/dwc/code/coingecko/2022/day_close/USD", &used_assets).unwrap();
     prices.patch(&other_prices, Utc.ymd(2022,1,1).and_hms(0,0,0), Utc.ymd(2022,11,13).and_hms(0,0,0));
-    prices.save("./2022/prices_USD.json");
+    prices.save("./data/2022/prices_USD.json");
 }
 
 
 pub fn save_linked_deltas() {
-    let mut deltas = deltas::Deltas::load("./2022/unlinked_deltas.json").unwrap();
+    let mut deltas = deltas::Deltas::load("./data/2022/unlinked_deltas.json").unwrap();
     deltas.link_airdrop_components(); 
     deltas.link_swap_components(); 
     // deltas.link_miner_direct_payment();
@@ -155,12 +155,12 @@ pub fn save_linked_deltas() {
     // deltas.link_dydx_deposits_and_withdraws();
     deltas.link_swap_fail_gas(std::time::Duration::from_secs(7*24*3600));
     // deltas.link_tx_cancel(std::time::Duration::from_secs(7*24*3600));
-    deltas.save("./2022/linked_deltas.json").unwrap();
+    deltas.save("./data/2022/linked_deltas.json").unwrap();
     check_linked_deltas();
 }
 
 pub fn check_linked_deltas() {
-    let deltas = deltas::Deltas::load("./2022/linked_deltas.json").unwrap();
+    let deltas = deltas::Deltas::load("./data/2022/linked_deltas.json").unwrap();
 
     for delta in &deltas.0 {
         if delta.ilk == deltas::Ilk::TradeFee || delta.ilk == deltas::Ilk::SwapGas || delta.ilk == deltas::Ilk::SwapFailGas {
