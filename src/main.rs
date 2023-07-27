@@ -88,61 +88,61 @@ fn main() {
     // year::twenty_three::save_USD_prices();
     // year::twenty_three::save_linked_deltas();
     // year::twenty_three::check_linked_deltas();
-    year::twenty_three::calculate(inventory::InventoryMethod::Fifo);
+    // year::twenty_three::calculate(inventory::InventoryMethod::Fifo);
     // year::twenty_three::check_end_inventory();
 
 
-    // let deltas = deltas::Deltas::load("./data/2023/linked_deltas.json").unwrap();
-    // let prices = prices::Prices::load("./data/2023/prices_USD.json").unwrap();
+    let deltas = deltas::Deltas::load("./data/2023/linked_deltas.json").unwrap();
+    let prices = prices::Prices::load("./data/2023/prices_USD.json").unwrap();
 
-    // let mut sum1 = 0.0;
-    // let mut sum2 = 0.0;
-    // let mut smallest = u64::MAX as f64;
+    let mut sum1 = 0.0;
+    let mut sum2 = 0.0;
+    let mut smallest = u64::MAX as f64;
 
-    // let mut smallet_by_pair: HashMap<String, f64> = HashMap::new();
-    // for (i, d) in deltas.0.iter().enumerate() {
-    //     // if d.asset == "UNI-V3-LIQUIDITY:494643_WETH_ARB_500_73280_73340" {
-    //     //     if d.direction == deltas::Direction::In {
-    //     //         let cost = deltas.index_cost(i, "USD", &prices);
-    //     //         dbg!(cost);
-    //     //         
-    //     //     }
-    //     //     dbg!(d);
-    //     // }
-    //     // if d.ilk == deltas::Ilk::WithdrawalToBank {
-    //     //     withdrawn += d.qty;
-    //     // }
-    //     // if d.ilk == deltas::Ilk::Airdrop {
-    //     //     sum1 += deltas.index_cost(i, "USD", &prices);
-    //     //     sum2 += d.value("USD", &prices);
-    //     // }
-    //     if d.asset.starts_with("UNI-V3-LIQUIDITY") {
+    let mut smallet_by_pair: HashMap<String, f64> = HashMap::new();
+    for (i, d) in deltas.0.iter().enumerate() {
+        // if d.asset == "UNI-V3-LIQUIDITY:494643_WETH_ARB_500_73280_73340" {
+        //     if d.direction == deltas::Direction::In {
+        //         let cost = deltas.index_cost(i, "USD", &prices);
+        //         dbg!(cost);
+        //         
+        //     }
+        //     dbg!(d);
+        // }
+        // if d.ilk == deltas::Ilk::WithdrawalToBank {
+        //     withdrawn += d.qty;
+        // }
+        // if d.ilk == deltas::Ilk::Airdrop {
+        //     sum1 += deltas.index_cost(i, "USD", &prices);
+        //     sum2 += d.value("USD", &prices);
+        // }
+        if d.asset.starts_with("UNI-V3-LIQUIDITY") {
 
-    //         let sym = {
-    //             let split: Vec<&str> = d.asset.split("_").collect();
-    //             let sym = format!("{}-{}", split[1], split[2]);
-    //             // dbg!(sym);
-    //             sym
+            let sym = {
+                let split: Vec<&str> = d.asset.split("_").collect();
+                let sym = format!("{}-{}", split[1], split[2]);
+                // dbg!(sym);
+                sym
 
-    //         };
+            };
 
-    //         if smallet_by_pair.contains_key(&sym) {
-    //             if d.qty < smallet_by_pair[&sym] {
-    //                 *smallet_by_pair.get_mut(&sym).unwrap() = d.qty;
-    //             }
-    //         } else {
-    //             smallet_by_pair.insert(sym, d.qty);
-    //         };
+            if smallet_by_pair.contains_key(&sym) {
+                if d.qty < smallet_by_pair[&sym] {
+                    *smallet_by_pair.get_mut(&sym).unwrap() = d.qty;
+                }
+            } else {
+                smallet_by_pair.insert(sym, d.qty);
+            };
 
-    //         // if d.qty < smallest {
-    //         //     dbg!(d);
-    //         //     smallest = d.qty;
-    //         // }
-    //     }
-    // }
-    // dbg!(sum1);
-    // dbg!(sum2);
-    // dbg!(smallet_by_pair);
+            // if d.qty < smallest {
+            //     dbg!(d);
+            //     smallest = d.qty;
+            // }
+        }
+    }
+    dbg!(sum1);
+    dbg!(sum2);
+    dbg!(smallet_by_pair);
 
     // for d in &deltas.0 {
     //     if d.asset.starts_with("UNI-V1") || d.asset == "GTC" {
