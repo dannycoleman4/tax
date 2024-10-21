@@ -431,6 +431,9 @@ impl Deltas {
                     }
 
                     let other_index = if above {
+
+                        // dbg!(self.0.len() - 1);
+                        // dbg!(index + steps);
                         std::cmp::min(self.0.len() - 1, index + steps)
                     } else {
                         if steps < index {
@@ -451,7 +454,13 @@ impl Deltas {
                         }
                     }
                     if !disposition_linked {
-                        if self.0[other_index].ilk == Ilk::Swap && self.0[other_index].identifier == self.0[index].identifier {
+                        if self.0[other_index].ilk == Ilk::Swap && self.0[other_index].identifier == self.0[index].identifier && index != other_index {
+                            // if !(self.0[other_index].direction == Direction::Out) {
+                            //     dbg!(index);
+                            //     dbg!(other_index);
+                            //     dbg!(&self.0[index]);
+                            //     dbg!(&self.0[other_index]);
+                            // }
                             assert!(self.0[other_index].direction == Direction::Out);
                             assert!(self.0[other_index].linked_to.len() == 0);
                             self.0[other_index].linked_to.push(index);
@@ -491,6 +500,7 @@ impl Deltas {
 
                     let other_index = if above {
                         std::cmp::min(self.0.len() - 1, index + steps)
+
                     } else {
                         if steps < index {
                             index - steps 
@@ -499,7 +509,17 @@ impl Deltas {
                         }
                     };
 
-                    if self.0[other_index].timestamp == self.0[index].timestamp {
+                    if index == other_index {
+                        have_incremented_time_up = true;
+                    }
+
+                    if self.0[other_index].timestamp == self.0[index].timestamp && index != other_index {
+
+                        // if other_index == 41374 {
+                        //     dbg!(steps);
+                        //     dbg!(above);
+                        //     dbg!(&self.0[other_index]);
+                        // }
 
                         // if self.0[other_index].ilk == Ilk::ManageLiquidityGas && self.0[index].identifier.starts_with(&self.0[other_index].identifier) {
                         //     assert!(self.0[other_index].direction == Direction::Out);
@@ -563,11 +583,23 @@ impl Deltas {
                         }
                     };
 
-                    if self.0[other_index].timestamp == self.0[index].timestamp {
+                    if self.0[other_index].timestamp == self.0[index].timestamp && index != other_index{
 
                         if self.0[other_index].ilk == Ilk::ManageLiquidity && self.0[other_index].identifier == self.0[index].identifier  {
-                            assert!(!self.0[other_index].asset.starts_with("UNI-V3-LIQUIDITY"));
-                            assert!(self.0[other_index].direction == Direction::In);
+                            
+                            if self.0[other_index].asset.starts_with("UNI-V3-LIQUIDITY") {
+                                dbg!(&self.0[index]);
+                                dbg!(&self.0[other_index]);
+                                dbg!(index, other_index);
+                                dbg!(self.0.len());
+                                panic!();
+                            }
+                            if self.0[other_index].direction != Direction::In {
+                                dbg!(&self.0[other_index].direction);
+                                dbg!(index, other_index);
+                                dbg!(self.0.len());
+                                panic!();
+                            };
                             assert!(self.0[other_index].linked_to.len() == 0);
                             self.0[other_index].linked_to.push(index);
                             links += 1; 
@@ -576,7 +608,7 @@ impl Deltas {
                             // disposition_linked = true;
                         }
 
-                    } else if self.0[other_index].timestamp > self.0[index].timestamp {
+                    } else if self.0[other_index].timestamp > self.0[index].timestamp || other_index >= self.0.len() - 1 {
                         have_incremented_time_up = true;
                     } else if self.0[other_index].timestamp < self.0[index].timestamp {
                         have_incremented_time_down = true;
@@ -814,6 +846,8 @@ impl Deltas {
                     Host::Mainnet => {
                     },
                     Host::Optimism => {
+                    },
+                    Host::Base => {
                     },
                     Host::Optimism10 => {
                     },
@@ -1340,6 +1374,9 @@ impl Deltas {
         } else if delta.ilk == Ilk::ChangeMakerVault {
             assert!(delta.asset == "DAI");
             delta.value(quote_currency, prices)
+        } else if delta.ilk == Ilk::Loan {
+            assert!(delta.asset == "ETH");
+            delta.value(quote_currency, prices)
         } else if delta.ilk == Ilk::Airdrop {
 
             let mut c = delta.value(quote_currency, prices);
@@ -1363,16 +1400,28 @@ impl Deltas {
                 c += self.0[*index].value(quote_currency, prices);
                 
             }
-            c
 
 
-            //////////2021////////////////////
+            //////////2021TEST////////////////////
             // if index % 4 == 0 || index % 7 == 0 {
-            //     c * 1.0031
-            // } else {
-            //     c
+            //     c *= 1.0031
             // }
-            //////////2021////////////////////
+            //////////2021TEST////////////////////
+
+            //////////2023TEST////////////////////
+            if delta.timestamp % 7000 == 0 && delta.timestamp < 1704067200000 && delta.timestamp >= 1672531200000 {
+                c *= 1.00095
+            }
+            //////////2023TEST////////////////////
+
+            //////////2024TEST////////////////////
+            // if delta.timestamp % 7000 == 0 && delta.timestamp < 1735689600000 && delta.timestamp >= 1704067200000 {
+            //     c *= 1.00095
+            // }
+            //////////2024TEST////////////////////
+            
+
+            c
 
         };
         cost
@@ -1538,7 +1587,7 @@ impl Delta {
 
     pub fn value (&self, quote_currency: &str, prices: &prices::Prices) -> f64 {
 
-        let symbol = symbols::rename_asset(&self);
+        let symbol = symbols::onchain_ticker_to_tax_ticker(&self.asset);
 
         let value = if self.asset == quote_currency {
             self.qty
@@ -1562,6 +1611,7 @@ pub enum Direction {
 pub enum Host {
     Mainnet, 
     Optimism,
+    Base,
     Optimism10,
     Optimism20,
     ArbitrumOne,
@@ -1581,6 +1631,7 @@ impl Host {
         match self {
             Host::Mainnet => false,
             Host::Optimism => false,
+            Host::Base => false,
             Host::Optimism10 => false,
             Host::Optimism20 => false,
             Host::ArbitrumOne => false,
@@ -1601,6 +1652,7 @@ impl Host {
 
             Host::Mainnet => "mainnet".to_string(),
             Host::Optimism => "optimism".to_string(),
+            Host::Base => "base".to_string(),
             Host::Optimism10 => "optimism".to_string(),
             Host::Optimism20 => "optimism".to_string(),
             Host::ArbitrumOne => "arbitrum_one".to_string(),
@@ -1678,7 +1730,12 @@ pub enum Ilk {
     ManageLiquidityGas,
     ManageLiquidityFailGas,
     ManageLiquidity,
-    SwapFees
+    SwapFees,
+    WalletDiscovery,
+    PhishingAttempt,
+    Loan,
+    LoanInterestPayment,
+    CoinbaseInterest,
 }
 
 

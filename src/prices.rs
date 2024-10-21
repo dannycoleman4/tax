@@ -5,30 +5,30 @@ use chrono::{TimeZone, Utc, Timelike, DateTime};
 
 
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum Granularity {
-    M15,
-    H1,
-    D1,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub enum Granularity {
+//     M15,
+//     H1,
+//     D1,
+// }
 
-impl Granularity {
-    pub fn seconds(&self) -> u64 {
-        match self {
-            Self::M15 => 900,
-            Self::H1 => 3600,
-            Self::D1 => 86400,
-        }
-    }
-    pub fn duration(&self) -> chrono::Duration {
-        chrono::Duration::seconds(self.seconds() as i64)
-    }
-}
+// impl Granularity {
+//     pub fn seconds(&self) -> u64 {
+//         match self {
+//             Self::M15 => 900,
+//             Self::H1 => 3600,
+//             Self::D1 => 86400,
+//         }
+//     }
+//     pub fn duration(&self) -> chrono::Duration {
+//         chrono::Duration::seconds(self.seconds() as i64)
+//     }
+// }
 
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Prices {
-    pub granularity: Granularity,
+    // pub granularity: Granularity,
     pub map: HashMap<String, HashMap<String, f64>>,
 }
 
@@ -55,56 +55,56 @@ impl Prices {
 
         }
         Ok(Prices {
-            granularity: Granularity::D1,
+            // granularity: Granularity::D1,
             map: map_map,
 
         })
     }
 
-    pub fn load_dir_candles(dir_path: &str, quote_asset: &str, base_assets: &Vec<String>) -> Result<Self, Box<dyn Error>> {
+    // pub fn load_dir_candles(dir_path: &str, quote_asset: &str, base_assets: &Vec<String>) -> Result<Self, Box<dyn Error>> {
 
-        let mut map_map: HashMap<String, HashMap<String, f64>> = HashMap::new();
-        let mut min_diff = u64::MAX;
+    //     let mut map_map: HashMap<String, HashMap<String, f64>> = HashMap::new();
+    //     let mut min_diff = u64::MAX;
 
-        for asset_id in base_assets {
-            let path = format!("{}/{}-{}.json", dir_path, asset_id, quote_asset);
-            
-            // println!("{}", path);
-            let data = match std::fs::read_to_string(&path) {
-                Ok(v) => v,
-                Err(err) => {
-                    println!("skipped: {}", asset_id);
-                    continue
-                }
-            };
-            let candles: Vec<Candle> = serde_json::from_str(&data).unwrap();
+    //     for asset_id in base_assets {
+    //         let path = format!("{}/{}-{}.json", dir_path, asset_id, quote_asset);
+    //         
+    //         // println!("{}", path);
+    //         let data = match std::fs::read_to_string(&path) {
+    //             Ok(v) => v,
+    //             Err(err) => {
+    //                 println!("skipped: {}", asset_id);
+    //                 continue
+    //             }
+    //         };
+    //         let candles: Vec<Candle> = serde_json::from_str(&data).unwrap();
 
-            let mut last_ts = 0;
-            let mut price_map = HashMap::new();
-            for candle in &candles {
+    //         let mut last_ts = 0;
+    //         let mut price_map = HashMap::new();
+    //         for candle in &candles {
 
-                if candle.timestamp_u64() - last_ts < min_diff {
-                    min_diff = candle.timestamp_u64() - last_ts;
-                }
-                last_ts = candle.timestamp_u64();
-                let price = (candle.high() + candle.low()) / 2.0;
+    //             if candle.timestamp_u64() - last_ts < min_diff {
+    //                 min_diff = candle.timestamp_u64() - last_ts;
+    //             }
+    //             last_ts = candle.timestamp_u64();
+    //             let price = (candle.high() + candle.low()) / 2.0;
 
-                price_map.insert(candle.timestamp_rfc3339(), price);
-            }
-            map_map.insert(asset_id.to_string(), price_map);
-        }
-        let granularity = match min_diff {
-            900 => Granularity::M15,
-            3600 => Granularity::H1,
-            86400 => Granularity::D1,
-            _=> panic!("")
-        };
-        Ok(Prices {
-            granularity: granularity,
-            map: map_map,
+    //             price_map.insert(candle.timestamp_rfc3339(), price);
+    //         }
+    //         map_map.insert(asset_id.to_string(), price_map);
+    //     }
+    //     let granularity = match min_diff {
+    //         900 => Granularity::M15,
+    //         3600 => Granularity::H1,
+    //         86400 => Granularity::D1,
+    //         _=> panic!("")
+    //     };
+    //     Ok(Prices {
+    //         granularity: granularity,
+    //         map: map_map,
 
-        })
-    }
+    //     })
+    // }
 
     pub fn load(path: &str) -> Result<Self, Box<dyn Error>> {
         let data = std::fs::read_to_string(path)?;
@@ -124,8 +124,9 @@ impl Prices {
             let mut all = Vec::new();
             let mut dt = incl_start;
             while dt < excl_end {
-                all.push(dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
-                dt = dt + self.granularity.duration()
+                // all.push(dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+                all.push(dt.date().format("%F").to_string());
+                dt = dt + chrono::Duration::days(1);
             }
             all
         };
@@ -145,8 +146,10 @@ impl Prices {
 
             for key in &all_keys_needed {
                 if !self.map[asset_id].contains_key(key) {
+                    // dbg!(&asset_id);
                     if other.map[asset_id].contains_key(key) {
-                        let price = other.price_at_rfc3339(asset_id, key);
+                        // let price = other.price_at_rfc3339(asset_id, key);
+                        let price = other.map[asset_id][key].clone();
                         println!("patch: {}, {}, {}", asset_id, key, price);
                         patched += 1;
                         self.map.get_mut(asset_id).unwrap().insert(key.clone(), price);
@@ -167,51 +170,63 @@ impl Prices {
         Ok(())
     }
 
-    pub fn price_at_rfc3339(&self, asset: &str, timestamp: &str) -> f64 {
-        let datetime = DateTime::parse_from_rfc3339(timestamp).unwrap();
-        match self.granularity {
-            Granularity::D1 => {
-                let floor = datetime.date().and_hms(0, 0, 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                self.map[asset][&floor]
-            },
-            Granularity::H1 => {
-                let floor = datetime.date().and_hms(datetime.time().hour(), 0, 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                self.map[asset][&floor]
-            }
-            Granularity::M15 => {
-                let floor = datetime.date().and_hms(datetime.time().hour(), datetime.time().minute(), 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                self.map[asset][&floor]
-            }
-    
-        }
+    // pub fn price_at_rfc3339(&self, asset: &str, timestamp: &str) -> f64 {
+    //     let datetime = DateTime::parse_from_rfc3339(timestamp).unwrap();
+    //     match self.granularity {
+    //         Granularity::D1 => {
+    //             let floor = datetime.date().and_hms(0, 0, 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    //             self.map[asset][&floor]
+    //         },
+    //         Granularity::H1 => {
+    //             let floor = datetime.date().and_hms(datetime.time().hour(), 0, 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    //             self.map[asset][&floor]
+    //         }
+    //         Granularity::M15 => {
+    //             let floor = datetime.date().and_hms(datetime.time().hour(), datetime.time().minute(), 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    //             self.map[asset][&floor]
+    //         }
+    // 
+    //     }
 
-    }
+    // }
 
     pub fn price_at_millis(&self, asset: &str, timestamp: u64) -> f64 {
         let datetime = Utc.timestamp_millis(timestamp as i64);
-        let p = match self.granularity {
-            Granularity::D1 => {
-                let floor = datetime.date().and_hms(0, 0, 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                if !self.map.contains_key(asset) {
-                    dbg!(asset);
-                } else if !self.map[asset].contains_key(&floor) {
-                    dbg!(asset);
-                    dbg!(&floor);
-                }
-                self.map[asset][&floor]
-            },
-            Granularity::H1 => {
-                let floor = datetime.date().and_hms(datetime.time().hour(), 0, 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                self.map[asset][&floor]
-            }
-            Granularity::M15 => {
-                let floor = datetime.date().and_hms(datetime.time().hour(), datetime.time().minute(), 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                self.map[asset][&floor]
-            }
-    
-        };
-        p*0.97
 
+        let p = {
+             // let floor = datetime.date().and_hms(0, 0, 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+             let date: String = datetime.date().format("%F").to_string();;
+             if !self.map.contains_key(asset) {
+                 dbg!(asset);
+             } else if !self.map[asset].contains_key(&date) {
+                 dbg!(asset);
+                 dbg!(&date);
+             }
+             self.map[asset][&date]
+
+        };
+        // let p = match self.granularity {
+        //     Granularity::D1 => {
+        //         let floor = datetime.date().and_hms(0, 0, 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        //         if !self.map.contains_key(asset) {
+        //             dbg!(asset);
+        //         } else if !self.map[asset].contains_key(&floor) {
+        //             dbg!(asset);
+        //             dbg!(&floor);
+        //         }
+        //         self.map[asset][&floor]
+        //     },
+        //     Granularity::H1 => {
+        //         let floor = datetime.date().and_hms(datetime.time().hour(), 0, 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        //         self.map[asset][&floor]
+        //     }
+        //     Granularity::M15 => {
+        //         let floor = datetime.date().and_hms(datetime.time().hour(), datetime.time().minute(), 0).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        //         self.map[asset][&floor]
+        //     }
+    
+        // };
+        p
     }
 
     // pub fn price_at_millis(&self, asset: &str, timestamp: u64) -> f64 {

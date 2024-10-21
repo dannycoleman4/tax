@@ -164,7 +164,7 @@ impl Inventory {
 
             match delta.direction {
                 deltas::Direction::In => {
-                    let symbol = symbols::rename_asset(&delta);
+                    let symbol = symbols::delta_tax_ticker(&delta);
 
                     income += deltas.index_income(index, quote_currency, &prices);
 
@@ -219,7 +219,7 @@ impl Inventory {
                     //}
  
 
-                    let symbol = symbols::rename_asset(&delta);
+                    let symbol = symbols::delta_tax_ticker(&delta);
                     let total_revenue = deltas.index_revenue(index, quote_currency, &prices); 
 
                     let mut rem_qty = delta.qty;
@@ -231,7 +231,7 @@ impl Inventory {
 
                             while rem_qty > 0.0 {
                                 // println!("{}", rem_qty);
-                                let symbol = symbols::rename_asset(&delta);
+                                let symbol = symbols::delta_tax_ticker(&delta);
                                 if self.0[&symbol].len() == 0 {
                                     // println!("adding neg acq delta: {:#?}, rem_qty: {}", delta, rem_qty);
                                     self.0.get_mut(&symbol).unwrap().push ( Lot {
@@ -262,7 +262,7 @@ impl Inventory {
                             }
                         },
                         InventoryMethod::Lifo => {
-                            let symbol = symbols::rename_asset(&delta);
+                            let symbol = symbols::delta_tax_ticker(&delta);
                             while rem_qty > 0.0 {
 
 
@@ -298,7 +298,7 @@ impl Inventory {
                             }
                         }, 
                         InventoryMethod::Yipo => {
-                            let symbol = symbols::rename_asset(&delta);
+                            let symbol = symbols::delta_tax_ticker(&delta);
                             while rem_qty > 0.0 {
 
 
@@ -354,7 +354,7 @@ impl Inventory {
                     }
 
 
-                    self.remove_empty_positions(&symbols::rename_asset(&delta), &smallest_liquidity_deltas); 
+                    self.remove_empty_positions(&symbols::delta_tax_ticker(&delta), &smallest_liquidity_deltas); 
 
 
                     let mut rev = 0_f64;
@@ -570,7 +570,7 @@ impl ConsolidatedInventory {
 
             match delta.direction {
                 deltas::Direction::In => {
-                    let symbol = symbols::rename_asset(&delta);
+                    let symbol = symbols::delta_tax_ticker(&delta);
 
                     income += deltas.index_income(index, quote_currency, &prices);
 
@@ -594,7 +594,7 @@ impl ConsolidatedInventory {
                 },
                 deltas::Direction::Out => {
 
-                    let symbol = symbols::rename_asset(&delta);
+                    let symbol = symbols::delta_tax_ticker(&delta);
                     let total_revenue = deltas.index_revenue(index, quote_currency, prices); 
 
                     let cost_basis = self.0[&symbol].cost_basis(delta.qty); 

@@ -3,23 +3,23 @@ use crate::inventory;
 use crate::deltas;
 use crate::prices;
 use chrono::{Utc, TimeZone};
+use crate::symbols;
 
 
 
 pub fn calculate(method: inventory::InventoryMethod) {
     let mut inventory = load_initial_inventory_us();
-    inventory.add_asset("ARB");
-    inventory.add_asset("GMX");
-    inventory.add_asset("USDT");
-    // let mut inventory = inventory::Inventory::load("./2023/initial_inventory_us.json").unwrap();
-    let prices = prices::Prices::load("./data/2023/prices_USD.json").unwrap();
-    let mut deltas = deltas::Deltas::load("./data/2023/linked_deltas.json").unwrap();
+    inventory.add_asset("USDC.OPTIMISM");
+    inventory.add_asset("USDC.BASE");
+    // let mut inventory = inventory::Inventory::load("./2024/initial_inventory_us.json").unwrap();
+    let prices = prices::Prices::load("./data/2024/prices_USD.json").unwrap();
+    let mut deltas = deltas::Deltas::load("./data/2024/linked_deltas.json").unwrap();
     deltas.reassign_quote_fee_links("USD");
 
     let (summary, dispositions) = inventory.apply_deltas(&deltas, "USD", &prices, method);
     
-    // summary.save("./2023/summary_us.json");
-    inventory.save("./data/2023/end_inventory_us.json");
+    // summary.save("./2024/summary_us.json");
+    inventory.save("./data/2024/end_inventory_us.json");
 
     check_end_inventory();
 
@@ -30,20 +30,20 @@ pub fn calculate(method: inventory::InventoryMethod) {
     report += "day average (hourly vwap) prices from cryptocompare.com used to determine fair market value\n"; 
     report += "\n";
 
-    report += "2023 cryptocurrency income (\"airdrops\"):\n";
+    report += "2024 cryptocurrency income (\"airdrops\"):\n";
     report += &format!(" income: {:.8}\n", summary.income);
     report += "\n";
-    report += "2023 cryptocurrency capital_gains:\n";
+    report += "2024 cryptocurrency capital_gains:\n";
     report += &format!(" inventory method: {:.8}\n", summary.inventory_method);
     report += &format!(" short term capital gains: {:.8}\n", summary.short_term_capital_gains);
     report += &format!(" long term capital gains: {:.8}\n", summary.long_term_capital_gains);
     report += "\n";
     println!("{}", report);
 
-    let fp = "./data/2023/all_dispositions_us.csv";
+    let fp = "./data/2024/all_dispositions_us.csv";
     std::fs::write(fp, dispositions);
 
-    let fp = "./data/2023/capital_gains_report_us.txt";
+    let fp = "./data/2024/capital_gains_report_us.txt";
     std::fs::write(fp, report);
 
 }
@@ -51,14 +51,14 @@ pub fn calculate(method: inventory::InventoryMethod) {
 pub fn load_initial_inventory_us() -> inventory::Inventory {
 
     let initial_balances = {
-        let data = std::fs::read_to_string("./data/2023/initial_holdings.json").unwrap();
+        let data = std::fs::read_to_string("./data/2024/initial_holdings.json").unwrap();
         let ib: HashMap<String, f64> = serde_json::from_str(&data).unwrap();
         ib
     };
 
     // fir 2024, will need to load positions and check those too
 
-    let mut initial_inventory = inventory::Inventory::load("./data/2022/end_inventory_us.json").unwrap();
+    let mut initial_inventory = inventory::Inventory::load("./data/2023/end_inventory_us.json").unwrap();
 
 
     for (asset_id, acq_vec) in &initial_inventory.0 {
@@ -76,7 +76,7 @@ pub fn load_initial_inventory_us() -> inventory::Inventory {
         } else if asset_id == "REP" {
             initial_balances["REP"] + initial_balances["REPv2"]
         } else if asset_id == "USDC" {
-            initial_balances["USDC"] + initial_balances["USDC.ARBITRUM"]
+            initial_balances["USDC"] + initial_balances["USDC.ARBITRUM"] + initial_balances["USDC.BASE"] + initial_balances["USDC.OPTIMISM"]
         } else {
             initial_balances[asset_id]
         };
@@ -93,23 +93,28 @@ pub fn load_initial_inventory_us() -> inventory::Inventory {
 
 pub fn save_USD_prices() {
 
-    let deltas = deltas::Deltas::load("./data/2023/unlinked_deltas.json").unwrap();
+    let deltas = deltas::Deltas::load("./data/2024/unlinked_deltas.json").unwrap();
 
 
-    let mut used_assets = deltas.used_assets();
+    let used_assets = {
+        let onchain_names = deltas.used_assets();
+        let tax_names = symbols::batch_onchain_to_tax_ticker(&onchain_names);
+        tax_names
+
+    };
     dbg!(&used_assets);
-    used_assets.push("REP".to_string());
-    println!("used_assets: {:?}", used_assets);
-    // // let prices = prices::Prices::load_dir("/home/dwc/code/coingecko/2023/day_open/USD", &used_assets).unwrap();
-    let mut prices = prices::Prices::load_dir("/home/dwc/code/crypto_compare/2023/day_hourvwap/USD", &used_assets).unwrap();
-    // // let mut prices = prices::Prices::load_dir_candles("/home/dwc/code/coinbase/candles/2023/900", "USD", &used_assets).unwrap();
-    let other_prices = prices::Prices::load_dir("/home/dwc/code/coingecko/2023/day_close/USD", &used_assets).unwrap();
-    prices.patch(&other_prices, Utc.ymd(2023,1,1).and_hms(0,0,0), Utc.ymd(2024,1,1).and_hms(0,0,0));
-    prices.save("./data/2023/prices_USD.json");
+    // used_assets.push("REP".to_string());
+    // // let prices = prices::Prices::load_dir("/home/dwc/code/coingecko/2024/day_open/USD", &used_assets).unwrap();
+    let mut prices = prices::Prices::load_dir("/home/dwc/code/crypto_compare/2024/day_hourvwap/USD", &used_assets).unwrap();
+    // // let mut prices = prices::Prices::load_dir_candles("/home/dwc/code/coinbase/candles/2024/900", "USD", &used_assets).unwrap();
+    // dbg!(&prices);
+    let other_prices = prices::Prices::load_dir("/home/dwc/code/coingecko/2024/day_close/USD", &used_assets).unwrap();
+    prices.patch(&other_prices, Utc.ymd(2024,1,1).and_hms(0,0,0), Utc.ymd(2024,4,1).and_hms(0,0,0));
+    prices.save("./data/2024/prices_USD.json");
 }
 
 pub fn save_linked_deltas() {
-    let mut deltas = deltas::Deltas::load("./data/2023/unlinked_deltas.json").unwrap();
+    let mut deltas = deltas::Deltas::load("./data/2024/unlinked_deltas.json").unwrap();
     deltas.link_airdrop_components(); 
     deltas.link_add_liquidity_v3(); 
     {
@@ -194,12 +199,12 @@ pub fn save_linked_deltas() {
     deltas.link_swap_fail_gas(std::time::Duration::from_secs(7*24*3600));
     deltas.link_manage_liquidity_fail_gas(std::time::Duration::from_secs(7*24*3600));
     deltas.link_tx_cancel(std::time::Duration::from_secs(7*24*3600));
-    deltas.save("./data/2023/linked_deltas.json").unwrap();
+    deltas.save("./data/2024/linked_deltas.json").unwrap();
     check_linked_deltas();
 }
 
 pub fn check_linked_deltas() {
-    let deltas = deltas::Deltas::load("./data/2023/linked_deltas.json").unwrap();
+    let deltas = deltas::Deltas::load("./data/2024/linked_deltas.json").unwrap();
 
     for delta in &deltas.0 {
         if delta.ilk == deltas::Ilk::TradeFee {
@@ -275,12 +280,12 @@ fn acquisitions_that_need_link(deltas: &deltas::Deltas) {
 pub fn check_end_inventory() {
 
     let end_balances = {
-        let data = std::fs::read_to_string("./data/2023/end_holdings.json").unwrap();
+        let data = std::fs::read_to_string("./data/2024/end_holdings.json").unwrap();
         let ib: HashMap<String, f64> = serde_json::from_str(&data).unwrap();
         ib
     };
 
-    let mut end_inventory_us = inventory::Inventory::load("./data/2023/end_inventory_us.json").unwrap();
+    let mut end_inventory_us = inventory::Inventory::load("./data/2024/end_inventory_us.json").unwrap();
 
 
     for (asset_id, acq_vec) in &end_inventory_us.0 {
@@ -299,6 +304,8 @@ pub fn check_end_inventory() {
             end_balances["REP"] + end_balances["REPv2"]
         } else if asset_id == "USDC" {
             end_balances["USDC"] + end_balances["USDC.ARBITRUM"]
+        } else if asset_id == "SOL" {
+            end_balances["WSOL"]
         // } else if asset_id.starts_with("UNI-V3-LIQUIDITY") {
         //     if acq_vec.len() > most_acqs.len() {
         //         most_acqs = acq_vec.clone();
@@ -312,7 +319,9 @@ pub fn check_end_inventory() {
         //     positions += 1;
         //     continue
         } else {
+            dbg!(asset_id);
             end_balances[asset_id]
+
         };
         let surplus = tot_inv - exp_bal;
         println!("{}, {}", asset_id, surplus);
