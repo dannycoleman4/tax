@@ -147,7 +147,7 @@ impl Prices {
             for key in &all_keys_needed {
                 if !self.map[asset_id].contains_key(key) {
                     // dbg!(&asset_id);
-                    if other.map[asset_id].contains_key(key) {
+                    if other.map.contains_key(asset_id) && other.map[asset_id].contains_key(key) {
                         // let price = other.price_at_rfc3339(asset_id, key);
                         let price = other.map[asset_id][key].clone();
                         println!("patch: {}, {}, {}", asset_id, key, price);

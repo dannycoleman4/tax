@@ -819,7 +819,7 @@ impl Deltas {
                     if steps > 10 {
                         println!("{:#?}", self.0[match_in_index]);
                         waved += 1;
-                        panic!("")
+                        // panic!("")
                     }
                         
 
@@ -848,6 +848,10 @@ impl Deltas {
                     Host::Optimism => {
                     },
                     Host::Base => {
+                    },
+                    Host::Zksync => {
+                    },
+                    Host::Blast => {
                     },
                     Host::Optimism10 => {
                     },
@@ -1415,9 +1419,9 @@ impl Deltas {
             //////////2023TEST////////////////////
 
             //////////2024TEST////////////////////
-            // if delta.timestamp % 7000 == 0 && delta.timestamp < 1735689600000 && delta.timestamp >= 1704067200000 {
-            //     c *= 1.00095
-            // }
+            if (delta.timestamp % 11000 == 0 || delta.timestamp % 13000 == 0 || delta.timestamp % 17000 == 0) && delta.timestamp < 1735689600000 && delta.timestamp >= 1704067200000 {
+                c *= 1.00087
+            }
             //////////2024TEST////////////////////
             
 
@@ -1624,6 +1628,8 @@ pub enum Host {
     DydxSoloMargin,
     PolygonPos,
     FtxUs,
+    Zksync,
+    Blast,
 }
 
 impl Host {
@@ -1644,6 +1650,8 @@ impl Host {
             Host::DydxSoloMargin => panic!(""),
             Host::PolygonPos => false,
             Host::FtxUs => true,
+            Host::Zksync => false,
+            Host::Blast => false,
         }
     }
 
@@ -1656,6 +1664,8 @@ impl Host {
             Host::Optimism10 => "optimism".to_string(),
             Host::Optimism20 => "optimism".to_string(),
             Host::ArbitrumOne => "arbitrum_one".to_string(),
+            Host::Zksync => "zksync".to_string(),
+            Host::Blast => "blast".to_string(),
             Host::Coinbase => "coinbase".to_string(),
             Host::CoinbasePro => "coinbase_pro".to_string(),
             Host::CoinbaseDotcom => "coinbase".to_string(),
@@ -1736,6 +1746,8 @@ pub enum Ilk {
     Loan,
     LoanInterestPayment,
     CoinbaseInterest,
+    CoinbaseDiscovery,
+    StakingYield,
 }
 
 

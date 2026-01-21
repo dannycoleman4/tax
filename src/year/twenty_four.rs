@@ -102,14 +102,15 @@ pub fn save_USD_prices() {
         tax_names
 
     };
-    dbg!(&used_assets);
+    // dbg!(&used_assets);
     // used_assets.push("REP".to_string());
     // // let prices = prices::Prices::load_dir("/home/dwc/code/coingecko/2024/day_open/USD", &used_assets).unwrap();
     let mut prices = prices::Prices::load_dir("/home/dwc/code/crypto_compare/2024/day_hourvwap/USD", &used_assets).unwrap();
     // // let mut prices = prices::Prices::load_dir_candles("/home/dwc/code/coinbase/candles/2024/900", "USD", &used_assets).unwrap();
-    // dbg!(&prices);
+    // dbg!(&prices.map.keys());
+    // panic!();
     let other_prices = prices::Prices::load_dir("/home/dwc/code/coingecko/2024/day_close/USD", &used_assets).unwrap();
-    prices.patch(&other_prices, Utc.ymd(2024,1,1).and_hms(0,0,0), Utc.ymd(2024,4,1).and_hms(0,0,0));
+    prices.patch(&other_prices, Utc.ymd(2024,1,1).and_hms(0,0,0), Utc.ymd(2025,1,1).and_hms(0,0,0));
     prices.save("./data/2024/prices_USD.json");
 }
 
@@ -245,10 +246,13 @@ fn is_aquisition_that_needs_link(delta: &deltas::Delta) -> bool {
         && delta.ilk != deltas::Ilk::DepositDiscrepancy 
         && delta.ilk != deltas::Ilk::BridgeFeeRefund 
         && !(delta.ilk == deltas::Ilk::Airdrop && &delta.asset == "OP")
+        && !(delta.ilk == deltas::Ilk::Airdrop && &delta.asset == "ARB")
         && delta.ilk != deltas::Ilk::WalletDiscovery 
         && delta.ilk != deltas::Ilk::CoinbaseInterest 
         && delta.ilk != deltas::Ilk::Loan 
         && delta.ilk != deltas::Ilk::PhishingAttempt 
+        && delta.ilk != deltas::Ilk::StakingYield 
+        && delta.ilk != deltas::Ilk::CoinbaseDiscovery 
         ) {
         // dbg!(&delta);
         true
@@ -319,7 +323,7 @@ pub fn check_end_inventory() {
         //     positions += 1;
         //     continue
         } else {
-            dbg!(asset_id);
+            // dbg!(asset_id);
             end_balances[asset_id]
 
         };

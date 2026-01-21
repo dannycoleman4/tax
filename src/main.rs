@@ -166,9 +166,9 @@ fn main() {
     // }
 
 
-    let deltas = deltas::Deltas::load("./data/2024/unlinked_deltas.json").unwrap();
-    let used_assets = deltas.used_assets();
-    dbg!("{:?}", used_assets);
+    // let deltas = deltas::Deltas::load("./data/2024/unlinked_deltas.json").unwrap();
+    // let used_assets = deltas.used_assets();
+    // dbg!("{:?}", used_assets);
 
     // let ii = year::twenty_one::load_initial_inventory_us();
 
