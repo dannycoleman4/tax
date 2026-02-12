@@ -1,30 +1,68 @@
-
-
-
-pub fn requires_price (id: &str) -> bool {
-    if ["WETH", "WBTC", "UNI-V1:ZRX", "UNI-V1:REP", "USDC.ARBITRUM"].contains(id) {
-        false
-    } else {
-        true
+pub fn coingecko_id(ticker: &str) -> Option<&'static str> {
+    match ticker {
+        "ETH" => Some("ethereum"),
+        "WETH" => Some("weth"),
+        "UNI" => Some("uniswap"),
+        "LRC" => Some("loopring"),
+        "LINK" => Some("chainlink"),
+        "USDC" => Some("usd-coin"),
+        "BTC" => Some("bitcoin"),
+        "GRT" => Some("the-graph"),
+        "SNX" => Some("havven"),
+        "AAVE" => Some("aave"),
+        "SUSHI" => Some("sushi"),
+        "SKL" => Some("skale"),
+        "MATIC" => Some("matic-network"),
+        "MKR" => Some("maker"),
+        "REP" => Some("augur"),
+        "ZRX" => Some("0x"),
+        "YFI" => Some("yearn-finance"),
+        "DAI" => Some("dai"),
+        "MANA" => Some("decentraland"),
+        "BAT" => Some("basic-attention-token"),
+        "LOOM" => Some("loom-network"),
+        "GTC" => Some("gitcoin"),
+        "ENS" => Some("ethereum-name-service"),
+        "BNB" => Some("binancecoin"),
+        "KNC" => Some("kyber-network-crystal"),
+        "REQ" => Some("request-network"),
+        "KCS" => Some("kucoin-shares"),
+        "DYDX" => Some("dydx"),
+        "OP" => Some("optimism"),
+        "OMG" => Some("omisego"),
+        "GNO" => Some("gnosis"),
+        "LPT" => Some("livepeer"),
+        "ENG" => Some("enigma"),
+        "SPANK" => Some("spankchain"),
+        "AST" => Some("airswap"),
+        "POLY" => Some("polymath"),
+        "POWR" => Some("power-ledger"),
+        "WBTC" => Some("wrapped-bitcoin"),
+        "AION" => Some("aion"),
+        "ZEC" => Some("zcash"),
+        "IOTA" => Some("iota"),
+        "ETHW" => Some("ethereum-pow-iou"),
+        "GMX" => Some("gmx"),
+        "ARB" => Some("arbitrum"),
+        "USDT" => Some("tether"),
+        "STG" => Some("stargate-finance"),
+        "STGLP" => Some("stargate-finance"),
+        "AERO" => Some("aerodrome-finance"),
+        "DEGEN" => Some("degen-base"),
+        "BRETT" => Some("based-brett"),
+        "SPEC" => Some("spectral"),
+        "ROOST" => Some("roost"),
+        "PENDLE" => Some("pendle"),
+        "RDNT" => Some("radiant-capital"),
+        "STRK" => Some("starknet"),
+        "BLAST" => Some("blast"),
+        "VIRTUAL" => Some("virtual-protocol"),
+        "CBBTC" => Some("coinbase-wrapped-btc"),
+        "WLD" => Some("worldcoin-wld"),
+        "SOL" => Some("solana"),
+        "WSOL" => Some("solana"),
+        "ZRO" => Some("layerzero"),
+        "ZK" => Some("zksync"),
+        _ => None,
     }
-}
-
-
-pub fn alias (id: &str) -> Alias {
-    if id == "WETH" {
-        Alias::Yes("ETH")
-    } else if id == "WBTC" {
-        Alias::Yes("BTC")
-    } else if id == "USDC.ARBITRUM" {
-        Alias::Yes("USDC")
-    } else {
-        Alias::No
-    }
-}
-
-
-
-pub enum Alias {
-    Yes(String),
-    No
 }

@@ -160,6 +160,43 @@ impl Deltas {
                     
                 };
 
+            } else if self.0[index].ilk == Ilk::AssetRename && self.0[index].direction == Direction::In {
+
+                let mut steps = 0_usize;
+                let mut above = false;
+                let mut disposition_linked = false;
+                while !disposition_linked {
+                    if above {
+                        above = false;
+                    } else {
+                        steps += 1;
+                        above = true;
+                    }
+
+                    let other_index = if above {
+                        std::cmp::min(self.0.len() - 1, index + steps)
+                    } else {
+                        if steps < index {
+                            index - steps
+                        } else {
+                            0
+                        }
+                    };
+                    if !disposition_linked {
+                        if self.0[other_index].ilk == Ilk::AssetRename && self.0[other_index].identifier == self.0[index].identifier {
+                            assert!(self.0[other_index].timestamp == self.0[index].timestamp);
+                            assert!(self.0[other_index].direction == Direction::Out);
+                            assert!(self.0[other_index].linked_to.len() == 0);
+                            self.0[other_index].linked_to.push(index);
+                            links += 1;
+                            self.0[index].linked_to.push(other_index);
+                            links += 1;
+                            disposition_linked = true;
+                        }
+                    }
+
+                };
+
             }
         }
         println!("conversion links_added: {}",links);
@@ -861,6 +898,12 @@ impl Deltas {
                     },
                     Host::PolygonPos => {
                     },
+                    Host::Unichain => {
+                    },
+                    Host::Bsc => {
+                    },
+                    Host::Monad => {
+                    },
                     Host::CoinbaseDotcom => {
                         panic!("");
                         // assert!(self.0[index].ilk == Ilk::WithdrawalFee);
@@ -1287,6 +1330,9 @@ impl Deltas {
             if delta.asset.starts_with("UNI-V3-LIQUIDITY") {
                 continue
             };
+            if delta.asset.starts_with("UNI-V4-LIQUIDITY") {
+                continue
+            };
             if !uas.contains(&delta.asset) {
                 uas.push(delta.asset.clone());
             }
@@ -1630,6 +1676,9 @@ pub enum Host {
     FtxUs,
     Zksync,
     Blast,
+    Unichain,
+    Bsc,
+    Monad,
 }
 
 impl Host {
@@ -1652,6 +1701,9 @@ impl Host {
             Host::FtxUs => true,
             Host::Zksync => false,
             Host::Blast => false,
+            Host::Unichain => false,
+            Host::Bsc => false,
+            Host::Monad => false,
         }
     }
 
@@ -1675,6 +1727,9 @@ impl Host {
             Host::DydxSoloMargin => panic!(""),
             Host::PolygonPos => "polygon_pos".to_string(),
             Host::FtxUs => "ftx_us".to_string(),
+            Host::Unichain => "unichain".to_string(),
+            Host::Bsc => "bsc".to_string(),
+            Host::Monad => "monad".to_string(),
 
         }
     }
@@ -1748,6 +1803,11 @@ pub enum Ilk {
     CoinbaseInterest,
     CoinbaseDiscovery,
     StakingYield,
+    CoinbaseCalculationDiscrepancy,
+    AssetRename,
+    Reward,
+    RewardClaimGas,
+    RewardClaimFailGas,
 }
 
 

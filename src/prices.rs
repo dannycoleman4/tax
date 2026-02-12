@@ -106,6 +106,63 @@ impl Prices {
     //     })
     // }
 
+    pub fn fetch_coingecko(assets: &Vec<String>, from_unix: i64, to_unix: i64, api_key: &str, delay_millis: u64) -> Result<Self, Box<dyn Error>> {
+        let mut map_map: HashMap<String, HashMap<String, f64>> = HashMap::new();
+
+        for (i, asset_id) in assets.iter().enumerate() {
+            let cg_id = match crate::asset_ids::coingecko_id(asset_id) {
+                Some(id) => id,
+                None => {
+                    println!("skipped (no coingecko id): {}", asset_id);
+                    continue;
+                }
+            };
+
+            let url = format!(
+                "https://api.coingecko.com/api/v3/coins/{}/market_chart/range?vs_currency=usd&from={}&to={}",
+                cg_id, from_unix, to_unix
+            );
+
+            let resp = match ureq::get(&url)
+                .set("x-cg-demo-api-key", api_key)
+                .call()
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("error fetching {}: {}", asset_id, e);
+                    continue;
+                }
+            };
+
+            let body: serde_json::Value = serde_json::from_str(&resp.into_string()?)?;
+            let prices_arr = match body["prices"].as_array() {
+                Some(arr) => arr,
+                None => {
+                    println!("no prices array for {}: {}", asset_id, body);
+                    continue;
+                }
+            };
+
+            let mut price_map = HashMap::new();
+            for entry in prices_arr {
+                let ts_ms = entry[0].as_f64().unwrap() as i64;
+                let price = entry[1].as_f64().unwrap();
+                let datetime = Utc.timestamp_millis(ts_ms);
+                let date = datetime.date().format("%F").to_string();
+                price_map.insert(date, price);
+            }
+
+            println!("fetched {} ({}): {} days", asset_id, cg_id, price_map.len());
+            map_map.insert(asset_id.to_string(), price_map);
+
+            if i < assets.len() - 1 {
+                std::thread::sleep(std::time::Duration::from_millis(delay_millis));
+            }
+        }
+
+        Ok(Prices { map: map_map })
+    }
+
     pub fn load(path: &str) -> Result<Self, Box<dyn Error>> {
         let data = std::fs::read_to_string(path)?;
         let inner: Self = serde_json::from_str(&data)?;
