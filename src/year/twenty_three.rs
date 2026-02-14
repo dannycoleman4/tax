@@ -13,11 +13,11 @@ pub fn calculate(method: inventory::InventoryMethod) {
     inventory.add_asset("USDT");
     // let mut inventory = inventory::Inventory::load("./2023/initial_inventory_us.json").unwrap();
     let prices = prices::Prices::load("./data/2023/prices_USD.json").unwrap();
-    let mut deltas = deltas::Deltas::load("./data/2023/linked_deltas.json").unwrap();
-    deltas.reassign_quote_fee_links("USD");
+    let mut linked = deltas::LinkedDeltas::load("./data/2023/linked_deltas.json").unwrap();
+    linked.reassign_quote_fee_links("USD");
 
-    let (summary, dispositions) = inventory.apply_deltas(&deltas, "USD", &prices, method);
-    
+    let (summary, dispositions) = inventory.apply_deltas(&linked, "USD", &prices, method);
+
     // summary.save("./2023/summary_us.json");
     inventory.save("./data/2023/end_inventory_us.json");
 
@@ -27,7 +27,7 @@ pub fn calculate(method: inventory::InventoryMethod) {
     let mut report = String::new();
     report += "\n";
     report += "all values in USD\n";
-    report += "day average (hourly vwap) prices from cryptocompare.com used to determine fair market value\n"; 
+    report += "day average (hourly vwap) prices from cryptocompare.com used to determine fair market value\n";
     report += "\n";
 
     report += "2023 cryptocurrency income (\"airdrops\"):\n";
@@ -87,7 +87,7 @@ pub fn load_initial_inventory_us() -> inventory::Inventory {
             panic!("");
         }
     }
-    
+
     initial_inventory
 }
 
@@ -109,141 +109,32 @@ pub fn save_USD_prices() {
 }
 
 pub fn save_linked_deltas() {
-    let mut deltas = deltas::Deltas::load("./data/2023/unlinked_deltas.json").unwrap();
-    deltas.link_airdrop_components(); 
-    deltas.link_add_liquidity_v3(); 
-    {
-        use crate::deltas::Ilk;
-        use crate::deltas::Direction;
-        for delta in &deltas.0 {
-            if delta.ilk == Ilk::ManageLiquidity && delta.direction == Direction::In && delta.asset.starts_with("UNI-V3-LIQUIDITY") {
-                if delta.linked_to.len() != 1 {
-                    dbg!(delta);
-                }
-
-            }
-            if delta.ilk == Ilk::ManageLiquidity && delta.direction == Direction::Out && !delta.asset.starts_with("UNI-V3-LIQUIDITY"){
-                if delta.linked_to.len() != 1 {
-                    dbg!(delta);
-                }
-
-            }
-            // if delta.ilk == Ilk::ManageLiquidityGas && delta.direction == Direction::Out {
-            //     if delta.linked_to.len() != 1 {
-            //         dbg!(delta);
-            //     }
-
-            // }
-        }
-    }
-
-    deltas.link_remove_liquidity_v3(); 
-    {
-        use crate::deltas::Ilk;
-        use crate::deltas::Direction;
-        for delta in &deltas.0 {
-            if delta.ilk == Ilk::ManageLiquidity && delta.direction == Direction::Out && delta.asset.starts_with("UNI-V3-LIQUIDITY") {
-                if delta.linked_to.len() == 0 || delta.linked_to.len() > 2 {
-                    dbg!(delta);
-                }
-
-            }
-            if delta.ilk == Ilk::ManageLiquidity && delta.direction == Direction::In && !delta.asset.starts_with("UNI-V3-LIQUIDITY"){
-                if delta.linked_to.len() != 1 {
-                    dbg!(delta);
-                }
-
-            }
-            // if delta.ilk == Ilk::ManageLiquidityGas && delta.direction == Direction::Out {
-            //     if delta.linked_to.len() != 1 {
-            //         dbg!(delta);
-            //     }
-
-            // }
-        }
-    }
-    deltas.link_manage_liquidity_gas_v3(); 
-    {
-        use crate::deltas::Ilk;
-        use crate::deltas::Direction;
-        for delta in &deltas.0 {
-            if delta.ilk == Ilk::ManageLiquidityGas && delta.direction == Direction::Out {
-                if delta.linked_to.len() != 1 {
-                    dbg!(delta);
-                }
-
-            }
-            // if delta.ilk == Ilk::ManageLiquidity && delta.direction == Direction::In && !delta.asset.starts_with("UNI-V3-LIQUIDITY"){
-            //     if delta.linked_to.len() != 1 {
-            //         dbg!(delta);
-            //     }
-
-            // }
-            // if delta.ilk == Ilk::ManageLiquidityGas && delta.direction == Direction::Out {
-            //     if delta.linked_to.len() != 1 {
-            //         dbg!(delta);
-            //     }
-
-            // }
-        }
-    }
-
-    deltas.link_swap_components(); 
-    deltas.link_trade_components();
-    deltas.link_conversion_components();
-    deltas.link_swap_fail_gas(std::time::Duration::from_secs(7*24*3600));
-    deltas.link_manage_liquidity_fail_gas(std::time::Duration::from_secs(7*24*3600));
-    deltas.link_tx_cancel(std::time::Duration::from_secs(7*24*3600));
-    deltas.save("./data/2023/linked_deltas.json").unwrap();
+    let deltas = deltas::Deltas::load("./data/2023/unlinked_deltas.json").unwrap();
+    let linked = deltas.link();
+    linked.save("./data/2023/linked_deltas.json").unwrap();
     check_linked_deltas();
 }
 
 pub fn check_linked_deltas() {
-    let deltas = deltas::Deltas::load("./data/2023/linked_deltas.json").unwrap();
-
-    for delta in &deltas.0 {
-        if delta.ilk == deltas::Ilk::TradeFee {
-            assert!(delta.linked_to.len() == 1);
-        }
-        if delta.ilk == deltas::Ilk::SwapGas {
-            assert!(delta.linked_to.len() == 1);
-        }
-        if delta.ilk == deltas::Ilk::SwapFailGas {
-            assert!(delta.linked_to.len() < 2 );
-        }
-        if delta.ilk == deltas::Ilk::ManageLiquidityGas {
-            if delta.linked_to.len() < 1 {
-                println!("{}", delta.linked_to.len());
-                for index in &delta.linked_to {
-                    dbg!(&deltas.0[*index]);
-                }
-                println!("");
-            }
-            // assert!(delta.linked_to.len() == 1);
-        }
-        if delta.ilk == deltas::Ilk::ManageLiquidityFailGas {
-            
-            assert!(delta.linked_to.len() < 2);
-        }
-    }
-    acquisitions_that_need_link(&deltas);
-    deltas.disposition_links();
+    let linked = deltas::LinkedDeltas::load("./data/2023/linked_deltas.json").unwrap();
+    acquisitions_that_need_link(&linked);
+    linked.disposition_links();
 }
 
 fn is_aquisition_that_needs_link(delta: &deltas::Delta) -> bool {
     if (
-        delta.direction == deltas::Direction::In 
-        && delta.ilk != deltas::Ilk::WrapEth 
-        && delta.ilk != deltas::Ilk::UnwrapEth 
-        && delta.ilk != deltas::Ilk::SwapFees 
-        // && delta.ilk != deltas::Ilk::ChangeMakerVault 
-        && delta.ilk != deltas::Ilk::DepositDiscrepancy 
-        && delta.ilk != deltas::Ilk::BridgeFeeRefund 
+        delta.direction == deltas::Direction::In
+        && delta.ilk != deltas::Ilk::WrapEth
+        && delta.ilk != deltas::Ilk::UnwrapEth
+        && delta.ilk != deltas::Ilk::SwapFees
+        // && delta.ilk != deltas::Ilk::ChangeMakerVault
+        && delta.ilk != deltas::Ilk::DepositDiscrepancy
+        && delta.ilk != deltas::Ilk::BridgeFeeRefund
         && !(delta.ilk == deltas::Ilk::Airdrop && &delta.asset == "OP")
-        && delta.ilk != deltas::Ilk::WalletDiscovery 
-        && delta.ilk != deltas::Ilk::CoinbaseInterest 
-        && delta.ilk != deltas::Ilk::Loan 
-        && delta.ilk != deltas::Ilk::PhishingAttempt 
+        && delta.ilk != deltas::Ilk::WalletDiscovery
+        && delta.ilk != deltas::Ilk::CoinbaseInterest
+        && delta.ilk != deltas::Ilk::Loan
+        && delta.ilk != deltas::Ilk::PhishingAttempt
         ) {
         // dbg!(&delta);
         true
@@ -253,18 +144,18 @@ fn is_aquisition_that_needs_link(delta: &deltas::Delta) -> bool {
 }
 
 
-fn acquisitions_that_need_link(deltas: &deltas::Deltas) {
-
+fn acquisitions_that_need_link(linked: &deltas::LinkedDeltas) {
 
     let mut total = 0;
     let mut unlinked = 0;
-    for delta in &deltas.0 {
-        if is_aquisition_that_needs_link(delta) {
-            total += 1;
-            if delta.linked_to.len() == 0 {
-                println!("needs link: {:#?}", delta); 
-                unlinked += 1;
-
+    for group in &linked.0 {
+        for delta in &group.ins {
+            if is_aquisition_that_needs_link(delta) {
+                total += 1;
+                if group.outs.is_empty() && group.ins.len() == 1 {
+                    println!("needs link: {:#?}", delta);
+                    unlinked += 1;
+                }
             }
         }
     }
@@ -299,25 +190,13 @@ pub fn check_end_inventory() {
             end_balances["REP"] + end_balances["REPv2"]
         } else if asset_id == "USDC" {
             end_balances["USDC"] + end_balances["USDC.ARBITRUM"]
-        // } else if asset_id.starts_with("UNI-V3-LIQUIDITY") {
-        //     if acq_vec.len() > most_acqs.len() {
-        //         most_acqs = acq_vec.clone();
-        //     }
-        //     for acq in acq_vec {
-        //         if acq.qty > biggest_qty {
-        //             dbg!(&acq.qty);
-        //             biggest_qty = acq.qty;
-        //         }
-        //     }
-        //     positions += 1;
-        //     continue
         } else {
             end_balances[asset_id]
         };
         let surplus = tot_inv - exp_bal;
         println!("{}, {}", asset_id, surplus);
 
-        if asset_id.starts_with("UNI-V3-LIQUIDITY") {
+        if deltas::is_uni_cl_position(asset_id) {
 
             if surplus > 1024.0 {
                 println!("{}: tot_inv: {}, exp_bal: {}", asset_id, tot_inv, exp_bal);
@@ -331,5 +210,5 @@ pub fn check_end_inventory() {
             }
         }
     }
-    
+
 }

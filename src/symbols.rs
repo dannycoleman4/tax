@@ -6,10 +6,8 @@ use crate::deltas;
 
 
 
-
-
 pub fn delta_tax_ticker (delta: &deltas::Delta) -> String {
-    if delta.asset.starts_with("UNI-V3-LIQUIDITY") {
+    if deltas::is_uni_cl_position(&delta.asset) {
         format!("{}:{}", delta.asset, delta.host.to_string())
     } else {
         onchain_ticker_to_tax_ticker(&delta.asset)
@@ -31,7 +29,7 @@ pub fn onchain_ticker_to_tax_ticker (onchain_ticker: &str) -> String {
         String::from("USDC")
     } else if onchain_ticker == "WSOL" {
         String::from("SOL")
-    } else if onchain_ticker.starts_with("UNI-V3-LIQUIDITY") {
+    } else if deltas::is_uni_cl_position(onchain_ticker) {
         panic!();
     } else {
         String::from(onchain_ticker)

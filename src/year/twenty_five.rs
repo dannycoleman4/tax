@@ -11,10 +11,10 @@ pub fn calculate(method: inventory::InventoryMethod) {
     let mut inventory = load_initial_inventory_us();
     // let mut inventory = inventory::Inventory::load("./2025/initial_inventory_us.json").unwrap();
     let prices = prices::Prices::load("./data/2025/prices_USD.json").unwrap();
-    let mut deltas = deltas::Deltas::load("./data/2025/linked_deltas.json").unwrap();
-    deltas.reassign_quote_fee_links("USD");
+    let mut linked = deltas::LinkedDeltas::load("./data/2025/linked_deltas.json").unwrap();
+    linked.reassign_quote_fee_links("USD");
 
-    let (summary, dispositions) = inventory.apply_deltas(&deltas, "USD", &prices, method);
+    let (summary, dispositions) = inventory.apply_deltas(&linked, "USD", &prices, method);
 
     // summary.save("./2025/summary_us.json");
     inventory.save("./data/2025/end_inventory_us.json");
@@ -102,106 +102,25 @@ pub fn save_USD_prices() {
     let api_key = std::fs::read_to_string("/media/dwc/keys3/coingecko.txt").unwrap().trim().to_string();
     let from = Utc.ymd(2025, 1, 1).and_hms(0, 0, 0).timestamp();
     let to = Utc.ymd(2026, 1, 1).and_hms(0, 0, 0).timestamp();
-    let prices = prices::Prices::fetch_coingecko(&used_assets, from, to, &api_key, 2000).unwrap();
+    let prices = prices::Prices::fetch_coingecko(&used_assets, from, to, &api_key, 500).unwrap();
     prices.save("./data/2025/prices_USD.json");
 }
 
 pub fn save_linked_deltas() {
-    let mut deltas = deltas::Deltas::load("./data/2025/unlinked_deltas.json").unwrap();
-    deltas.link_airdrop_components();
-    deltas.link_add_liquidity_v3();
-    {
-        use crate::deltas::Ilk;
-        use crate::deltas::Direction;
-        for delta in &deltas.0 {
-            if delta.ilk == Ilk::ManageLiquidity && delta.direction == Direction::In && delta.asset.starts_with("UNI-V3-LIQUIDITY") {
-                if delta.linked_to.len() != 1 {
-                    dbg!(delta);
-                }
-
-            }
-            if delta.ilk == Ilk::ManageLiquidity && delta.direction == Direction::Out && !delta.asset.starts_with("UNI-V3-LIQUIDITY"){
-                if delta.linked_to.len() != 1 {
-                    dbg!(delta);
-                }
-
-            }
-        }
-    }
-
-    deltas.link_remove_liquidity_v3();
-    {
-        use crate::deltas::Ilk;
-        use crate::deltas::Direction;
-        for delta in &deltas.0 {
-            if delta.ilk == Ilk::ManageLiquidity && delta.direction == Direction::Out && delta.asset.starts_with("UNI-V3-LIQUIDITY") {
-                if delta.linked_to.len() == 0 || delta.linked_to.len() > 2 {
-                    dbg!(delta);
-                }
-
-            }
-            if delta.ilk == Ilk::ManageLiquidity && delta.direction == Direction::In && !delta.asset.starts_with("UNI-V3-LIQUIDITY"){
-                if delta.linked_to.len() != 1 {
-                    dbg!(delta);
-                }
-
-            }
-        }
-    }
-    deltas.link_manage_liquidity_gas_v3();
-    {
-        use crate::deltas::Ilk;
-        use crate::deltas::Direction;
-        for delta in &deltas.0 {
-            if delta.ilk == Ilk::ManageLiquidityGas && delta.direction == Direction::Out {
-                if delta.linked_to.len() != 1 {
-                    dbg!(delta);
-                }
-
-            }
-        }
-    }
-
-    deltas.link_swap_components();
-    deltas.link_trade_components();
-    deltas.link_conversion_components();
-    deltas.link_swap_fail_gas(std::time::Duration::from_secs(7*24*3600));
-    deltas.link_manage_liquidity_fail_gas(std::time::Duration::from_secs(7*24*3600));
-    deltas.link_tx_cancel(std::time::Duration::from_secs(7*24*3600));
-    deltas.save("./data/2025/linked_deltas.json").unwrap();
+    println!("loading unlinked deltas...");
+    let deltas = deltas::Deltas::load("./data/2025/unlinked_deltas.json").unwrap();
+    println!("loaded {} deltas, linking...", deltas.0.len());
+    let linked = deltas.link();
+    println!("linked into {} groups, saving...", linked.0.len());
+    linked.save("./data/2025/linked_deltas.json").unwrap();
+    println!("saved, checking...");
     check_linked_deltas();
 }
 
 pub fn check_linked_deltas() {
-    let deltas = deltas::Deltas::load("./data/2025/linked_deltas.json").unwrap();
-
-    for delta in &deltas.0 {
-        if delta.ilk == deltas::Ilk::TradeFee {
-            assert!(delta.linked_to.len() == 1);
-        }
-        if delta.ilk == deltas::Ilk::SwapGas {
-            assert!(delta.linked_to.len() == 1);
-        }
-        if delta.ilk == deltas::Ilk::SwapFailGas {
-            assert!(delta.linked_to.len() < 2 );
-        }
-        if delta.ilk == deltas::Ilk::ManageLiquidityGas {
-            if delta.linked_to.len() < 1 {
-                println!("{}", delta.linked_to.len());
-                for index in &delta.linked_to {
-                    dbg!(&deltas.0[*index]);
-                }
-                println!("");
-            }
-            // assert!(delta.linked_to.len() == 1);
-        }
-        if delta.ilk == deltas::Ilk::ManageLiquidityFailGas {
-
-            assert!(delta.linked_to.len() < 2);
-        }
-    }
-    acquisitions_that_need_link(&deltas);
-    deltas.disposition_links();
+    let linked = deltas::LinkedDeltas::load("./data/2025/linked_deltas.json").unwrap();
+    acquisitions_that_need_link(&linked);
+    linked.disposition_links();
 }
 
 fn is_aquisition_that_needs_link(delta: &deltas::Delta) -> bool {
@@ -219,6 +138,7 @@ fn is_aquisition_that_needs_link(delta: &deltas::Delta) -> bool {
         && delta.ilk != deltas::Ilk::CoinbaseInterest
         && delta.ilk != deltas::Ilk::Loan
         && delta.ilk != deltas::Ilk::PhishingAttempt
+        && delta.ilk != deltas::Ilk::SwapRefund
         && delta.ilk != deltas::Ilk::StakingYield
         && delta.ilk != deltas::Ilk::CoinbaseDiscovery
         && delta.ilk != deltas::Ilk::CoinbaseCalculationDiscrepancy
@@ -231,18 +151,23 @@ fn is_aquisition_that_needs_link(delta: &deltas::Delta) -> bool {
 }
 
 
-fn acquisitions_that_need_link(deltas: &deltas::Deltas) {
-
+fn acquisitions_that_need_link(linked: &deltas::LinkedDeltas) {
 
     let mut total = 0;
     let mut unlinked = 0;
-    for delta in &deltas.0 {
-        if is_aquisition_that_needs_link(delta) {
-            total += 1;
-            if delta.linked_to.len() == 0 {
-                println!("needs link: {:#?}", delta);
-                unlinked += 1;
-
+    for group in &linked.0 {
+        for delta in &group.ins {
+            if is_aquisition_that_needs_link(delta) {
+                total += 1;
+                if group.outs.is_empty() && group.ins.len() <= 1 {
+                    // Solo In with no Outs — might need a link
+                    // But some Ins are standalone (e.g. ManageLiquidity token In linked to position In)
+                    // Check if there's another In in the group (for CL remove liquidity etc.)
+                    if group.ins.len() == 1 {
+                        println!("needs link: {:#?}", delta);
+                        unlinked += 1;
+                    }
+                }
             }
         }
     }
@@ -286,7 +211,7 @@ pub fn check_end_inventory() {
         let surplus = tot_inv - exp_bal;
         println!("{}, {}", asset_id, surplus);
 
-        if asset_id.starts_with("UNI-V3-LIQUIDITY") {
+        if deltas::is_uni_cl_position(asset_id) {
 
             if surplus > 1024.0 {
                 println!("{}: tot_inv: {}, exp_bal: {}", asset_id, tot_inv, exp_bal);

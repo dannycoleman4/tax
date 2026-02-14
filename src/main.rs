@@ -100,7 +100,7 @@ fn main() {
     // year::twenty_four::check_end_inventory();
 
     // year::twenty_five::save_USD_prices();
-    // year::twenty_five::save_linked_deltas();
+    year::twenty_five::save_linked_deltas();
     // year::twenty_five::check_linked_deltas();
     // year::twenty_five::calculate(inventory::InventoryMethod::Lifo);
     // year::twenty_five::check_end_inventory();
@@ -173,9 +173,9 @@ fn main() {
     // }
 
 
-    let deltas = deltas::Deltas::load("./data/2025/unlinked_deltas.json").unwrap();
-    let used_assets = deltas.used_assets();
-    dbg!("{:?}", used_assets);
+    // let deltas = deltas::Deltas::load("./data/2025/unlinked_deltas.json").unwrap();
+    // let used_assets = deltas.used_assets();
+    // dbg!("{:?}", used_assets);
 
     // let ii = year::twenty_one::load_initial_inventory_us();
 

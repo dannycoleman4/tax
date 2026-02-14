@@ -119,12 +119,12 @@ impl Prices {
             };
 
             let url = format!(
-                "https://api.coingecko.com/api/v3/coins/{}/market_chart/range?vs_currency=usd&from={}&to={}",
+                "https://pro-api.coingecko.com/api/v3/coins/{}/market_chart/range?vs_currency=usd&from={}&to={}",
                 cg_id, from_unix, to_unix
             );
 
             let resp = match ureq::get(&url)
-                .set("x-cg-demo-api-key", api_key)
+                .set("x-cg-pro-api-key", api_key)
                 .call()
             {
                 Ok(r) => r,

@@ -8,30 +8,16 @@ use chrono::{Utc, TimeZone};
 
 
 pub fn save_linked_deltas() {
-    let mut deltas = deltas::Deltas::load("./2020/unlinked_deltas.json").unwrap();
-    deltas.link_airdrop_components(); 
-    deltas.link_swap_components(); 
-    deltas.link_trade_components();
-    deltas.link_unused_kucoin_fees_within(1);
-    deltas.link_unused_kucoin_fees_within(5);
-    deltas.link_unused_kucoin_fees_within(10);
-    deltas.link_unused_kucoin_fees_within(60);
-    deltas.link_conversion_components();
-    deltas.link_remove_liquidity_components();
-    deltas.link_swap_fail_gas(std::time::Duration::from_secs(24*3600));
-    deltas.save("./2020/linked_deltas.json").unwrap();
+    let deltas = deltas::Deltas::load("./2020/unlinked_deltas.json").unwrap();
+    let linked = deltas.link();
+    linked.save("./2020/linked_deltas.json").unwrap();
     check_linked_deltas();
 }
 
 pub fn check_linked_deltas() {
-    let mut deltas = deltas::Deltas::load("./2020/linked_deltas.json").unwrap();
-    acquisitions_that_need_link(&deltas);
-    for delta in &deltas.0 {
-        if delta.ilk == deltas::Ilk::TradeFee || delta.ilk == deltas::Ilk::SwapGas || delta.ilk == deltas::Ilk::SwapFailGas {
-            assert!(delta.linked_to.len() < 2);
-        }
-    }
-    deltas.disposition_links();
+    let linked = deltas::LinkedDeltas::load("./2020/linked_deltas.json").unwrap();
+    acquisitions_that_need_link(&linked);
+    linked.disposition_links();
 }
 
 
@@ -54,7 +40,7 @@ pub fn save_initial_inventory_us() {
     };
 
     let ts = Utc.ymd(2020, 01, 01).and_hms(0,0,0).timestamp_millis();
-    let mut acquisitions = inventory::Inventory::initiate_zero_cost(&initial_balances, ts as u64); 
+    let mut acquisitions = inventory::Inventory::initiate_zero_cost(&initial_balances, ts as u64);
     acquisitions.consolidate_alias("BTC", "WBTC");
     acquisitions.consolidate_alias("ETH", "WETH");
     acquisitions.consolidate_alias("REP", "REPv2");
@@ -65,11 +51,11 @@ pub fn save_initial_inventory_us() {
 pub fn calculate_us(method: inventory::InventoryMethod) {
     let mut inventory = inventory::Inventory::load("./2020/initial_inventory_us.json").unwrap();
     let prices = prices::Prices::load("./2020/prices_USD.json").unwrap();
-    let mut deltas = deltas::Deltas::load("./2020/linked_deltas.json").unwrap();
-    deltas.reassign_quote_fee_links("USD");
+    let mut linked = deltas::LinkedDeltas::load("./2020/linked_deltas.json").unwrap();
+    linked.reassign_quote_fee_links("USD");
 
-    let (summary, dispositions) = inventory.apply_deltas(&deltas, "USD", &prices, method);
-    
+    let (summary, dispositions) = inventory.apply_deltas(&linked, "USD", &prices, method);
+
     // summary.save("./2020/summary_us.json");
     inventory.save("./2020/end_inventory_us.json");
 
@@ -77,7 +63,7 @@ pub fn calculate_us(method: inventory::InventoryMethod) {
     let mut report = String::new();
     report += "\n";
     report += "all values in USD\n";
-    report += "day average prices from cryptocompare.com used to determine fair market value\n"; 
+    report += "day average prices from cryptocompare.com used to determine fair market value\n";
     report += "\n";
 
     report += "2020 cryptocurrency income (\"airdrops\"):\n";
@@ -116,17 +102,18 @@ fn is_aquisition_that_needs_link(delta: &deltas::Delta) -> bool {
 }
 
 
-fn acquisitions_that_need_link(deltas: &deltas::Deltas) {
-
+fn acquisitions_that_need_link(linked: &deltas::LinkedDeltas) {
 
     let mut total = 0;
     let mut unlinked = 0;
-    for delta in &deltas.0 {
-        if is_aquisition_that_needs_link(delta) {
-            total += 1;
-            if delta.linked_to.len() == 0 {
-                println!("{:#?}", delta); 
-                unlinked += 1;
+    for group in &linked.0 {
+        for delta in &group.ins {
+            if is_aquisition_that_needs_link(delta) {
+                total += 1;
+                if group.outs.is_empty() && group.ins.len() == 1 {
+                    println!("{:#?}", delta);
+                    unlinked += 1;
+                }
             }
         }
     }
@@ -149,7 +136,7 @@ pub fn save_initial_inventory_canada() {
         ib
     };
 
-    let mut holdings = inventory::ConsolidatedInventory::initiate_zero_cost(&initial_balances); 
+    let mut holdings = inventory::ConsolidatedInventory::initiate_zero_cost(&initial_balances);
     holdings.consolidate_alias("BTC", "WBTC");
     holdings.consolidate_alias("ETH", "WETH");
     holdings.consolidate_alias("REP", "REPv2");
@@ -159,35 +146,28 @@ pub fn save_initial_inventory_canada() {
 pub fn calculate_canada() {
 
     let ts = Utc.ymd(2020,11,01).and_hms(0,0,0).timestamp_millis() as u64;
-    
+
     let mut holdings = inventory::ConsolidatedInventory::load("./2020/initial_inventory_canada.json").unwrap();
     let prices = prices::Prices::load("./2020/prices_CAD.json").unwrap();
     let day_close_prices = prices::Prices::load("/home/dwc/code/crypto_compare/2020/day_close/CAD/2020-10-31UTC.json").unwrap();
 
-    let deltas = {
-        let mut filtered = Vec::new();
-        let all = deltas::Deltas::load("./2020/linked_deltas.json").unwrap();
-
-        println!("all: {}", all.0.len());
-
-        for d in &all.0 {
-            if d.timestamp < ts {
-                filtered.push(d.clone())
-            }
-        }
+    let linked = {
+        let all_deltas = deltas::Deltas::load("./2020/unlinked_deltas.json").unwrap();
+        let filtered: Vec<deltas::Delta> = all_deltas.0.into_iter().filter(|d| d.timestamp < ts).collect();
         println!("filtered: {}", filtered.len());
-        deltas::Deltas ( filtered )
+        let filtered_deltas = deltas::Deltas(filtered);
+        filtered_deltas.link()
     };
 
 
-    let (summary, disps) = holdings.apply_deltas(&deltas, "CAD", &prices);
+    let (summary, disps) = holdings.apply_deltas(&linked, "CAD", &prices);
     println!("");
 
     let mut report = String::new();
 
     report += "\n";
     report += "all values in CAD\n";
-    report += "day average prices from cryptocompare.com used for income\n"; 
+    report += "day average prices from cryptocompare.com used for income\n";
     report += "day average prices from cryptocompare.com used for capital gains prior to deemed dispositions\n";
     report += "day close prices for 2020-10-31 from cryptocompare.com used for value at deemed dispositions\n";
     report += "\n";
@@ -207,7 +187,7 @@ pub fn calculate_canada() {
     let mut total_cost = 0.0;
     let mut total_value = 0.0;
     for (asset, holding) in &holdings.0 {
-        if asset.starts_with("UNI-V1:") || holding.qty < 0.00000001 || asset == "USD"{ 
+        if asset.starts_with("UNI-V1:") || holding.qty < 0.00000001 || asset == "USD"{
             // println!("skipped: {}", asset);
             continue
         }

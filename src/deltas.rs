@@ -1,10 +1,20 @@
 use serde::{Serialize, Deserialize};
 use std::error::Error;
-use std::io::Write;
+
 use crate::prices;
 use crate::symbols;
 use chrono::TimeZone;
 use std::collections::{HashMap, HashSet};
+
+/// Returns true if the asset represents a Uniswap concentrated-liquidity
+/// position (V3 or V4). These are tracked as synthetic assets with an
+/// NFT-like identifier rather than a fungible token ticker, and need
+/// special handling throughout linking, cost basis, and revenue calculations.
+///
+/// Asset format: `UNI-V{3,4}-LIQUIDITY:{tokenId}_{token0}_{token1}_{feeOrPoolId}_{tickLower}_{tickUpper}`
+pub fn is_uni_cl_position(asset: &str) -> bool {
+    asset.starts_with("UNI-V3-LIQUIDITY") || asset.starts_with("UNI-V4-LIQUIDITY")
+}
 
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -21,1316 +31,13 @@ impl Deltas {
     pub fn save (&self, path: &str) -> Result<(), Box<dyn Error>> {
         let json_string = serde_json::to_string(&self)?;
         std::fs::write(path, &json_string)?;
-        // let mut opts_file = std::fs::OpenOptions::new()
-        //     .truncate(true)
-        //     .write(true)
-        //     .open(path)?;
-        // opts_file.write(&json_string.as_bytes()).unwrap();
         Ok(())
-    }
-
-
-    pub fn swap_to_swap_gas(&self) -> usize {
-        let mut swap = 0;
-        let mut swap_gas = 0;
-        for delta in &self.0 {
-            match delta.ilk {
-                Ilk::Swap => swap += 1,
-                Ilk::SwapGas => swap_gas += 1,
-                _ => {},
-            }
-        }
-        let ratio = swap/swap_gas;
-        // println!("swap: {}, swap_gas: {}, ratio: {}", swap,  swap_gas, ratio);
-        ratio
-    }
-
-    pub fn link_dydx_deposits_and_withdraws (&mut self) {
-        let mut deposit_address_and_index = Vec::new();
-
-        let mut links = 0;
-        for index in 0..self.0.len() {
-            if self.0[index].ilk == Ilk::DydxDeposit {
-                // println!("deposit, account: {}", self.0[index].account);
-                deposit_address_and_index.push((self.0[index].account.clone(), index))
-            } else if self.0[index].ilk == Ilk::DydxWithdraw {
-                // println!("wihdraw, account: {}", self.0[index].account);
-                let mut deposit_index_option = None;
-                for tup_index in 0..deposit_address_and_index.len() {
-                    if deposit_address_and_index[tup_index].0 == self.0[index].account {
-                        deposit_index_option = Some(deposit_address_and_index[tup_index].1);
-                        deposit_address_and_index.remove(tup_index);
-                        break
-                    }
-                }
-                let deposit_index = deposit_index_option.unwrap();
-
-                self.0[deposit_index].linked_to.push(index);
-                links += 1; 
-                self.0[index].linked_to.push(deposit_index);
-                links += 1; 
-            }
-        }
-        assert!(deposit_address_and_index.len() == 0);
-        println!("dydx deposit-withdras links added: {}",links);
-    }
-
-    pub fn link_conversion_components (&mut self) {
-
-        let mut links = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::CoinbaseConversion && self.0[index].direction == Direction::In {
-
-                // for d in &self.0 {
-                //     if d.identifier == self.0[index].identifier {
-                //         dbg!(d);
-                //     }
-                // }
-                // println!("");
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                let mut disposition_linked = false;
-                while !disposition_linked {
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, index + steps)
-                    } else {
-                        if steps < index {
-                            index - steps 
-                        } else {
-                            0
-                        }
-                    };
-                    if !disposition_linked {
-                        if self.0[other_index].ilk == Ilk::CoinbaseConversion && self.0[other_index].identifier == self.0[index].identifier {
-                            // assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                            assert!(self.0[other_index].direction == Direction::Out);
-                            assert!(self.0[other_index].linked_to.len() == 0);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            disposition_linked = true;
-                        }
-                    }
-                    
-                };
-            } else if self.0[index].ilk == Ilk::AutomaticConversion && self.0[index].direction == Direction::In {
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                let mut disposition_linked = false;
-                while !disposition_linked {
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, index + steps)
-                    } else {
-                        if steps < index {
-                            index - steps 
-                        } else {
-                            0
-                        }
-                    };
-                    if !disposition_linked {
-                        if self.0[other_index].ilk == Ilk::AutomaticConversion && self.0[other_index].identifier == self.0[index].identifier {
-                            assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                            assert!(self.0[other_index].direction == Direction::Out);
-                            assert!(self.0[other_index].linked_to.len() == 0);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            disposition_linked = true;
-                        }
-                    }
-                    
-                };
-
-            } else if self.0[index].ilk == Ilk::AssetRename && self.0[index].direction == Direction::In {
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                let mut disposition_linked = false;
-                while !disposition_linked {
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, index + steps)
-                    } else {
-                        if steps < index {
-                            index - steps
-                        } else {
-                            0
-                        }
-                    };
-                    if !disposition_linked {
-                        if self.0[other_index].ilk == Ilk::AssetRename && self.0[other_index].identifier == self.0[index].identifier {
-                            assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                            assert!(self.0[other_index].direction == Direction::Out);
-                            assert!(self.0[other_index].linked_to.len() == 0);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1;
-                            self.0[index].linked_to.push(other_index);
-                            links += 1;
-                            disposition_linked = true;
-                        }
-                    }
-
-                };
-
-            }
-        }
-        println!("conversion links_added: {}",links);
-
-    }
-
-    pub fn link_airdrop_components (&mut self) {
-
-        let mut links = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::Airdrop && !self.0[index].host.is_custodial_exchange() {
-
-                assert!(self.0[index].direction == Direction::In);
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                let mut gas_fee_linked = false;
-                let mut timestamp_misses = 0;
-                while !gas_fee_linked {
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, index + steps)
-                    } else {
-                        if steps < index {
-                            index - steps 
-                        } else {
-                            0
-                        }
-                    };
-                    if !gas_fee_linked {
-
-                        if self.0[other_index].ilk == Ilk::AirdropClaimGas && self.0[other_index].identifier == self.0[index].identifier {
-                            assert!(self.0[other_index].direction == Direction::Out);
-                            assert!(self.0[other_index].linked_to.len() == 0);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            gas_fee_linked = true;
-                        }
-                    }
-                    if self.0[other_index].timestamp != self.0[index].timestamp {
-                        timestamp_misses += 1;
-                        if timestamp_misses >= 2 {
-                            break
-                        }
-                    }
-                };
-            }
-        }
-        println!("airdrop links added: {}",links);
-
-    }
-
-    pub fn link_miner_direct_payment(&mut self) {
-
-        let mut links = 0;
-        let mut waved = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::PayMinerDireclty || self.0[index].ilk == Ilk::PayMinerDirecltyGas {
-
-                assert!(self.0[index].direction == Direction::Out);
-                assert!(self.0[index].linked_to.len() == 0);
-
-                let mut steps = 0_usize;
-                let mut linked_or_waved = false;
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                let mut linked = false;
-                while !linked {
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, index + steps)
-                    } else {
-                        if steps < index {
-                            index - steps 
-                        } else {
-                            0
-                        }
-                    };
-                    if self.0[other_index].ilk == Ilk::Swap && self.0[other_index].timestamp == self.0[index].timestamp &&self.0[other_index].direction == Direction::In {
-                        assert!(self.0[other_index].linked_to.len() == 1 || self.0[other_index].linked_to.len() == 2 || self.0[other_index].linked_to.len() == 3);
-                        self.0[other_index].linked_to.push(index);
-                        links += 1; 
-                        self.0[index].linked_to.push(other_index);
-                        links += 1; 
-                        linked = true;
-                    }
-                    // if self.0[other_index].timestamp != self.0[index].timestamp {
-                    //     println!("not2");
-                    //     break
-                    // }
-                    
-                };
-            }
-        }
-        println!("miner_direct_payment: added: {}, waved: {}",links, waved);
-    }
-
-    pub fn link_tx_cancel(&mut self, window: std::time::Duration) {
-
-        let mut links = 0;
-        let mut waved = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::EmptyTransaction {
-
-                assert!(self.0[index].direction == Direction::Out);
-                assert!(self.0[index].linked_to.len() == 0);
-
-                let mut steps = 0_usize;
-                let mut linked_or_waved = false;
-                while !linked_or_waved {
-
-                    let other_index = index + steps;
-
-                    if self.0[other_index].timestamp - self.0[index].timestamp > window.as_millis() as u64 {
-                        linked_or_waved = true;
-                        waved += 1;
-                    } else if (
-                        self.0[other_index].ilk == Ilk::Swap && 
-                        self.0[other_index].direction == Direction::In && 
-                        self.0[other_index].account == self.0[index].account
-                        ){
-                        self.0[other_index].linked_to.push(index);
-                        links += 1; 
-                        self.0[index].linked_to.push(other_index);
-                        links += 1; 
-                        linked_or_waved = true;
-                    
-                    } 
-                    steps += 1;
-
-                    if index + steps >= self.0.len() {
-                        linked_or_waved = true;
-                        waved += 1;
-                    }
-
-                    
-                }
-            }
-        }
-        println!("transaction_cancel: added: {}, waved: {}",links, waved);
-    }
-
-    pub fn link_swap_fail_gas(&mut self, window: std::time::Duration) {
-
-        let mut links = 0;
-        let mut waved = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::SwapFailGas {
-
-                assert!(self.0[index].direction == Direction::Out);
-                assert!(self.0[index].linked_to.len() == 0);
-
-                let mut steps = 0_usize;
-                let mut linked_or_waved = false;
-                while !linked_or_waved {
-
-                    let other_index = index + steps;
-
-                    if self.0[other_index].timestamp - self.0[index].timestamp > window.as_millis() as u64 {
-                        linked_or_waved = true;
-                        waved += 1;
-                    } else if (
-                        self.0[other_index].ilk == Ilk::Swap && 
-                        self.0[other_index].direction == Direction::In && 
-                        self.0[other_index].account == self.0[index].account
-                        ){
-                        self.0[other_index].linked_to.push(index);
-                        links += 1; 
-                        self.0[index].linked_to.push(other_index);
-                        links += 1; 
-                        linked_or_waved = true;
-                    
-                    } 
-                    steps += 1;
-
-                    if index + steps >= self.0.len() {
-                        linked_or_waved = true;
-                        waved += 1;
-                    }
-
-                    
-                }
-            }
-        }
-        println!("swap_fail_gas: added: {}, waved: {}",links, waved);
-    }
-
-    pub fn link_manage_liquidity_fail_gas(&mut self, window: std::time::Duration) {
-
-        let mut links = 0;
-        let mut waved = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::ManageLiquidityFailGas {
-
-                assert!(self.0[index].direction == Direction::Out);
-                assert!(self.0[index].linked_to.len() == 0);
-
-                let mut steps = 0_usize;
-                let mut linked_or_waved = false;
-                while !linked_or_waved {
-
-                    let other_index = index + steps;
-
-                    if self.0[other_index].timestamp - self.0[index].timestamp > window.as_millis() as u64 {
-                        linked_or_waved = true;
-                        waved += 1;
-                    } else if (
-                        self.0[other_index].ilk == Ilk::ManageLiquidity && 
-                        self.0[other_index].direction == Direction::In && 
-                        self.0[other_index].account == self.0[index].account
-                        ){
-                        self.0[other_index].linked_to.push(index);
-                        links += 1; 
-                        self.0[index].linked_to.push(other_index);
-                        links += 1; 
-                        linked_or_waved = true;
-                    
-                    } 
-                    steps += 1;
-
-                    if index + steps >= self.0.len() {
-                        linked_or_waved = true;
-                        waved += 1;
-                    }
-
-                    
-                }
-            }
-        }
-        println!("manage_liquidity_fail_gas: added: {}, waved: {}",links, waved);
-    }
-
-    pub fn link_swap_components (&mut self) {
-        let mut links = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::Swap && self.0[index].direction == Direction::In {
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                let mut gas_fee_linked = false;
-                let mut disposition_linked = false;
-                while !gas_fee_linked || !disposition_linked {
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-
-                        // dbg!(self.0.len() - 1);
-                        // dbg!(index + steps);
-                        std::cmp::min(self.0.len() - 1, index + steps)
-                    } else {
-                        if steps < index {
-                            index - steps 
-                        } else {
-                            0
-                        }
-                    };
-                    if !gas_fee_linked {
-                        if self.0[other_index].ilk == Ilk::SwapGas && self.0[other_index].identifier == self.0[index].identifier {
-                            assert!(self.0[other_index].direction == Direction::Out);
-                            assert!(self.0[other_index].linked_to.len() == 0);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            gas_fee_linked = true;
-                        }
-                    }
-                    if !disposition_linked {
-                        if self.0[other_index].ilk == Ilk::Swap && self.0[other_index].identifier == self.0[index].identifier && index != other_index {
-                            // if !(self.0[other_index].direction == Direction::Out) {
-                            //     dbg!(index);
-                            //     dbg!(other_index);
-                            //     dbg!(&self.0[index]);
-                            //     dbg!(&self.0[other_index]);
-                            // }
-                            assert!(self.0[other_index].direction == Direction::Out);
-                            assert!(self.0[other_index].linked_to.len() == 0);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            disposition_linked = true;
-                        }
-                    }
-                };
-            }
-        }
-        println!("swap links added: {}",links);
-    }
-
-    pub fn link_add_liquidity_v3 (&mut self) {
-        let mut links = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::ManageLiquidity && self.0[index].direction == Direction::In && self.0[index].asset.starts_with("UNI-V3-LIQUIDITY") {
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                // let mut gas_fee_linked = false;
-                // let mut disposition_linked = false;
-
-                let mut have_incremented_time_up = false;
-                let mut have_incremented_time_down = false;
-                while !have_incremented_time_up || !have_incremented_time_down {
-
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, index + steps)
-
-                    } else {
-                        if steps < index {
-                            index - steps 
-                        } else {
-                            0
-                        }
-                    };
-
-                    if index == other_index {
-                        have_incremented_time_up = true;
-                    }
-
-                    if self.0[other_index].timestamp == self.0[index].timestamp && index != other_index {
-
-                        // if other_index == 41374 {
-                        //     dbg!(steps);
-                        //     dbg!(above);
-                        //     dbg!(&self.0[other_index]);
-                        // }
-
-                        // if self.0[other_index].ilk == Ilk::ManageLiquidityGas && self.0[index].identifier.starts_with(&self.0[other_index].identifier) {
-                        //     assert!(self.0[other_index].direction == Direction::Out);
-                        //     assert!(self.0[other_index].linked_to.len() == 0);
-                        //     self.0[other_index].linked_to.push(index);
-                        //     links += 1; 
-                        //     self.0[index].linked_to.push(other_index);
-                        //     links += 1; 
-                        //     // gas_fee_linked = true;
-                        if self.0[other_index].ilk == Ilk::ManageLiquidity && self.0[other_index].identifier == self.0[index].identifier {
-                            assert!(self.0[other_index].direction == Direction::Out);
-                            assert!(self.0[other_index].linked_to.len() == 0);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            // disposition_linked = true;
-                        }
-
-                    } else if self.0[other_index].timestamp > self.0[index].timestamp {
-                        have_incremented_time_up = true;
-                    } else if self.0[other_index].timestamp < self.0[index].timestamp {
-                        have_incremented_time_down = true;
-                    }
-                    
-                };
-            }
-        }
-        println!("add v3 liquiduty links added: {}",links);
-    }
-
-    pub fn link_remove_liquidity_v3 (&mut self) {
-        let mut links = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::ManageLiquidity && self.0[index].direction == Direction::Out && self.0[index].asset.starts_with("UNI-V3-LIQUIDITY") {
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                // let mut gas_fee_linked = false;
-                // let mut disposition_linked = false;
-
-                let mut have_incremented_time_up = false;
-                let mut have_incremented_time_down = false;
-                while !have_incremented_time_up || !have_incremented_time_down {
-
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, index + steps)
-                    } else {
-                        if steps < index {
-                            index - steps 
-                        } else {
-                            0
-                        }
-                    };
-
-                    if self.0[other_index].timestamp == self.0[index].timestamp && index != other_index{
-
-                        if self.0[other_index].ilk == Ilk::ManageLiquidity && self.0[other_index].identifier == self.0[index].identifier  {
-                            
-                            if self.0[other_index].asset.starts_with("UNI-V3-LIQUIDITY") {
-                                dbg!(&self.0[index]);
-                                dbg!(&self.0[other_index]);
-                                dbg!(index, other_index);
-                                dbg!(self.0.len());
-                                panic!();
-                            }
-                            if self.0[other_index].direction != Direction::In {
-                                dbg!(&self.0[other_index].direction);
-                                dbg!(index, other_index);
-                                dbg!(self.0.len());
-                                panic!();
-                            };
-                            assert!(self.0[other_index].linked_to.len() == 0);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            // disposition_linked = true;
-                        }
-
-                    } else if self.0[other_index].timestamp > self.0[index].timestamp || other_index >= self.0.len() - 1 {
-                        have_incremented_time_up = true;
-                    } else if self.0[other_index].timestamp < self.0[index].timestamp {
-                        have_incremented_time_down = true;
-                    }
-                    
-                };
-            }
-        }
-        println!("remove v3 liquiduty links added: {}",links);
-    }
-
-    pub fn link_manage_liquidity_gas_v3 (&mut self) {
-        let mut links = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::ManageLiquidityGas && self.0[index].direction == Direction::Out {
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                let mut linked = false;
-                // let mut disposition_linked = false;
-
-                let mut have_incremented_time_up = false;
-                let mut have_incremented_time_down = false;
-
-                while !linked {
-
-                    if have_incremented_time_down && have_incremented_time_up {
-                        dbg!(&self.0[index].identifier);
-                        linked = true;
-                        // panic!("");
-                    };
-
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, index + steps)
-                    } else {
-                        if steps < index {
-                            index - steps 
-                        } else {
-                            0
-                        }
-                    };
-
-                    if self.0[other_index].timestamp == self.0[index].timestamp {
-
-                        if self.0[other_index].ilk == Ilk::ManageLiquidity && self.0[other_index].direction == Direction::In && self.0[other_index].identifier.starts_with(&self.0[index].identifier) {
-                            assert!(self.0[index].linked_to.len() == 0);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            linked = true;
-                        }
-                            // gas_fee_linked = true;
-                    } else if self.0[other_index].timestamp > self.0[index].timestamp {
-                        have_incremented_time_up = true;
-                    } else if self.0[other_index].timestamp < self.0[index].timestamp {
-                        have_incremented_time_down = true;
-                    }
-                    
-                };
-            }
-        }
-        println!("add v3 liquiduty links added: {}",links);
-    }
-
-    pub fn link_remove_liquidity_components (&mut self) {
-        let mut links = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::RemoveLiquidity && self.0[index].direction == Direction::In {
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                let mut gas_fee_linked = false;
-                let mut disposition_linked = false;
-                while !gas_fee_linked || !disposition_linked {
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, index + steps)
-                    } else {
-                        if steps < index {
-                            index - steps 
-                        } else {
-                            0
-                        }
-                    };
-                    if !gas_fee_linked {
-                        if self.0[other_index].ilk == Ilk::RemoveLiquidityGas && self.0[other_index].identifier == self.0[index].identifier {
-                            assert!(self.0[other_index].direction == Direction::Out);
-                            assert!(self.0[other_index].linked_to.len() < 2);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            gas_fee_linked = true;
-                        }
-                    }
-                    if !disposition_linked {
-                        if self.0[other_index].ilk == Ilk::RemoveLiquidity && self.0[other_index].direction == Direction::Out && self.0[other_index].identifier == self.0[index].identifier {
-                            assert!(self.0[other_index].linked_to.len() < 2);
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            disposition_linked = true;
-                        }
-                    }
-                };
-            }
-        }
-        println!("remove liquidity links added: {}",links);
-    }
-
-    pub fn index_link_type_count(&self, index: usize, ilk: Ilk) -> usize {
-        let mut count = 0;
-        for i in &self.0[index].linked_to {
-            if self.0[*i].ilk == ilk {
-                count += 1;
-            }
-
-        }
-        count
-
-    }
-
-    pub fn reassign_quote_fee_links(&mut self, quote_currency: &str) {
-        let mut total_reassigned = 0;
-        let mut waved = 0;
-        for match_in_index in 0..self.0.len() {
-            if self.0[match_in_index].ilk == Ilk::Match 
-                && self.0[match_in_index].direction == Direction::In 
-                && self.0[match_in_index].asset == quote_currency 
-                && self.index_link_type_count(match_in_index, Ilk::TradeFee) == 1 {
-                assert!(self.0[match_in_index].linked_to.len() == 2);
-                assert!(self.0[match_in_index].host.is_custodial_exchange());
-
-                
-                let mut removed = 0;
-                let mut added = 0;
-
-                let mut fee_index_option = None;
-                for potential_fee_index in self.0[match_in_index].linked_to.clone() {
-                    if self.0[potential_fee_index].ilk == Ilk::TradeFee {
-                        fee_index_option = Some(potential_fee_index);
-                    }
-                    
-                }
-
-                let fee_index = fee_index_option.unwrap();
-
-                {
-                    let i_option = self.0[fee_index].linked_to.iter().position(|x| x == &match_in_index);
-                    let i = i_option.unwrap();
-                    self.0[fee_index].linked_to.remove(i);
-                    removed += 1;
-                }
-                {
-                    let i_option = self.0[match_in_index].linked_to.iter().position(|x| x == &fee_index);
-                    let i = i_option.unwrap();
-                    self.0[match_in_index].linked_to.remove(i);
-                    removed += 1;
-                }
-
-                let mut above = false;
-                let mut steps = 0; 
-                while added < 2 {
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, fee_index + steps)
-                    } else {
-                        if steps < fee_index {
-                            fee_index - steps 
-                        } else {
-                            0
-                        }
-                    };
-                        
-                    if self.0[other_index].ilk == Ilk::Match && self.0[other_index].direction == Direction::Out && self.0[other_index].identifier == self.0[fee_index].identifier {
-                        assert!(self.0[other_index].identifier == self.0[match_in_index].identifier);
-                        assert!(self.0[fee_index].ilk == Ilk::TradeFee && self.0[fee_index].direction == Direction::Out);
-                        assert!(self.0[other_index].linked_to.len() == 1);
-                        self.0[fee_index].linked_to.push(other_index);
-                        added += 1; 
-                        self.0[other_index].linked_to.push(fee_index);
-                        added += 1; 
-                    }
-                    
-                    if steps > 10 {
-                        println!("{:#?}", self.0[match_in_index]);
-                        waved += 1;
-                        // panic!("")
-                    }
-                        
-
-                }
-                assert!(added == removed);
-                total_reassigned += removed;
-            }
-        }
-        println!("reassined: {}", total_reassigned);
-    }
-
-    pub fn link_trade_components (&mut self) {
-
-        // let mut same_id = 0;
-        // let mut waved = 0;
-        // let mut close_timestamp = 0;
-
-        let mut links = 0;
-        let mut waved = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::Match && self.0[index].direction == Direction::In {
-                match self.0[index].host {
-                    Host::Mainnet => {
-                    },
-                    Host::Optimism => {
-                    },
-                    Host::Base => {
-                    },
-                    Host::Zksync => {
-                    },
-                    Host::Blast => {
-                    },
-                    Host::Optimism10 => {
-                    },
-                    Host::Optimism20 => {
-                    },
-                    Host::ArbitrumOne => {
-                    },
-                    Host::PolygonPos => {
-                    },
-                    Host::Unichain => {
-                    },
-                    Host::Bsc => {
-                    },
-                    Host::Monad => {
-                    },
-                    Host::CoinbaseDotcom => {
-                        panic!("");
-                        // assert!(self.0[index].ilk == Ilk::WithdrawalFee);
-                    },
-                    Host::Coinbase => {
-                        let mut steps = 0_usize;
-                        let mut above = false;
-                        let mut fee_linked_or_waved = false;
-                        let mut disposition_linked = false;
-                        while !fee_linked_or_waved || !disposition_linked {
-                            if above {
-                                above = false;
-                            } else {
-                                steps += 1;
-                                above = true;
-                            }
-
-                            let other_index = if above {
-                                std::cmp::min(self.0.len() - 1, index + steps)
-                            } else {
-                                if steps < index {
-                                    index - steps 
-                                } else {
-                                    0
-                                }
-                            };
-                            if !fee_linked_or_waved {
-                                
-                                if self.0[other_index].timestamp != self.0[index].timestamp && steps > 10 {
-                                    fee_linked_or_waved = true;
-                                    waved += 1;
-
-                                }
-                                if self.0[other_index].ilk == Ilk::TradeFee && self.0[other_index].identifier == self.0[index].identifier {
-                     //             assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    fee_linked_or_waved = true;
-                                }
-                            }
-                            if !disposition_linked {
-                                if self.0[other_index].ilk == Ilk::Match && self.0[other_index].identifier == self.0[index].identifier {
-                     //             assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    disposition_linked = true;
-                                }
-                            }
-                        };
-                    },
-                    Host::CoinbasePro => {
-                        let mut steps = 0_usize;
-                        let mut above = false;
-                        let mut fee_linked_or_waved = false;
-                        let mut disposition_linked = false;
-                        while !fee_linked_or_waved || !disposition_linked {
-                            if above {
-                                above = false;
-                            } else {
-                                steps += 1;
-                                above = true;
-                            }
-
-                            let other_index = if above {
-                                std::cmp::min(self.0.len() - 1, index + steps)
-                            } else {
-                                if steps < index {
-                                    index - steps 
-                                } else {
-                                    0
-                                }
-                            };
-                            if !fee_linked_or_waved {
-                                
-                                if self.0[other_index].timestamp != self.0[index].timestamp && steps > 10 {
-                                    fee_linked_or_waved = true;
-                                    waved += 1;
-
-                                }
-                                if self.0[other_index].ilk == Ilk::TradeFee && self.0[other_index].identifier == self.0[index].identifier {
-                     //             assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    fee_linked_or_waved = true;
-                                }
-                            }
-                            if !disposition_linked {
-                                if self.0[other_index].ilk == Ilk::Match && self.0[other_index].identifier == self.0[index].identifier {
-                     //             assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    disposition_linked = true;
-                                }
-                            }
-                        };
-                    },
-                    Host::FtxUs => {
-                        // panic!("not implemented; everything below is copy of coinbase");
-                        let mut steps = 0_usize;
-                        let mut above = false;
-                        let mut fee_linked_or_waved = false;
-                        let mut disposition_linked = false;
-                        while !fee_linked_or_waved || !disposition_linked {
-                            if above {
-                                above = false;
-                            } else {
-                                steps += 1;
-                                above = true;
-                            }
-
-                            let other_index = if above {
-                                std::cmp::min(self.0.len() - 1, index + steps)
-                            } else {
-                                if steps < index {
-                                    index - steps 
-                                } else {
-                                    0
-                                }
-                            };
-                            if !fee_linked_or_waved {
-                                
-                                if self.0[other_index].timestamp != self.0[index].timestamp && steps > 10 {
-                                    fee_linked_or_waved = true;
-                                    waved += 1;
-
-                                }
-                                if self.0[other_index].ilk == Ilk::TradeFee && self.0[other_index].identifier == self.0[index].identifier && self.0[other_index].direction == Direction::Out {
-                     //             assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    // assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    fee_linked_or_waved = true;
-                                }
-                            }
-                            if !disposition_linked {
-                                if self.0[other_index].ilk == Ilk::Match && self.0[other_index].identifier == self.0[index].identifier {
-                     //             assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    disposition_linked = true;
-                                }
-                            }
-                        };
-                    },
-                    Host::Binance => {
-                        let mut steps = 0_usize;
-                        let mut above = false;
-                        let mut fee_linked = false;
-                        let mut disposition_linked = false;
-                        while !fee_linked || !disposition_linked {
-                            if above {
-                                above = false;
-                            } else {
-                                steps += 1;
-                                above = true;
-                            }
-
-                            let other_index = if above {
-                                std::cmp::min(self.0.len() - 1, index + steps)
-                            } else {
-                                if steps < index {
-                                    index - steps 
-                                } else {
-                                    0
-                                }
-                            };
-                            if !fee_linked {
-                                if self.0[other_index].ilk == Ilk::TradeFee && self.0[other_index].identifier == self.0[index].identifier {
-                                    assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    fee_linked = true;
-                                }
-                            }
-                            if !disposition_linked {
-                                if self.0[other_index].ilk == Ilk::Match && self.0[other_index].identifier == self.0[index].identifier {
-                                    assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    disposition_linked = true;
-                                }
-                            }
-                        };
-                    },
-                    Host::BinanceUs => {
-                        let mut steps = 0_usize;
-                        let mut above = false;
-                        let mut fee_linked = false;
-                        let mut disposition_linked = false;
-                        while !fee_linked || !disposition_linked {
-                            if above {
-                                above = false;
-                            } else {
-                                steps += 1;
-                                above = true;
-                            }
-
-                            let other_index = if above {
-                                std::cmp::min(self.0.len() - 1, index + steps)
-                            } else {
-                                if steps < index {
-                                    index - steps 
-                                } else {
-                                    0
-                                }
-                            };
-                            if self.0[index].identifier.starts_with("ETHUSD") {
-                                fee_linked = true;
-                            }
-                            if !fee_linked {
-                                
-                                if self.0[other_index].ilk == Ilk::TradeFee && self.0[other_index].identifier == self.0[index].identifier {
-                                    assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    fee_linked = true;
-                                }
-                            }
-                            if !disposition_linked {
-                                if self.0[other_index].ilk == Ilk::Match && self.0[other_index].identifier == self.0[index].identifier {
-                                    assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    disposition_linked = true;
-                                }
-                            }
-                        };
-                    },
-                    Host::Kucoin => {
-
-                        let mut steps = 0_usize;
-                        let mut above = false;
-                        let mut fee_linked_or_waved = false;
-                        let mut disposition_linked = false;
-                        while !disposition_linked || !fee_linked_or_waved {
-                            if above {
-                                above = false;
-                            } else {
-                                steps += 1;
-                                above = true;
-                            }
-
-                            let other_index = if above {
-                                std::cmp::min(self.0.len() - 1, index + steps)
-                            } else {
-                                if steps < index {
-                                    index - steps 
-                                } else {
-                                    0
-                                }
-                            };
-                            if !fee_linked_or_waved {
-
-                                
-                                if above && self.0[other_index].timestamp - self.0[index].timestamp > 0 {
-                                    // println!("{:?}", self.0[index]);
-                                    fee_linked_or_waved = true;
-
-                                    waved += 1;
-                                } else if !above && self.0[index].timestamp - self.0[other_index].timestamp > 0 {
-                                    // println!("{:?}", self.0[index]);
-                                    fee_linked_or_waved = true;
-                                    waved += 1;
-                                } else if self.0[other_index].ilk == Ilk::TradeFee && 
-                                    self.0[other_index].host == Host::Kucoin &&
-                                    self.0[other_index].linked_to.len() == 0 &&
-                                    self.0[other_index].timestamp == self.0[index].timestamp 
-                                    {
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    if self.0[other_index].identifier == self.0[index].identifier {
-                                        self.0[other_index].linked_to.push(index);
-                                        links += 1; 
-                                        self.0[index].linked_to.push(other_index);
-                                        links += 1; 
-                                        fee_linked_or_waved = true;
-                                        // same_id += 1;
-                                    } else {
-                                        self.0[other_index].linked_to.push(index);
-                                        links += 1; 
-                                        self.0[index].linked_to.push(other_index);
-                                        links += 1; 
-                                        fee_linked_or_waved = true;
-                                        // close_timestamp += 1;
-                                    }
-                                }
-                                
-                            }
-                            if !disposition_linked {
-                                if self.0[other_index].host == Host::Kucoin && 
-                                        self.0[other_index].ilk == Ilk::Match && 
-                                        self.0[other_index].identifier == self.0[index].identifier && 
-                                        self.0[other_index].direction == Direction::Out {
-                                    assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    // assert!(self.0[other_index].direction == Direction::Out);
-                                    if self.0[other_index].direction != Direction::Out {
-                                        println!("index {:?}", self.0[index]);
-                                        println!("other {:?}", self.0[other_index]);
-                                    };
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    disposition_linked = true;
-
-                                }
-                            }
-                            if index == self.0.len() - 1{
-                                println!("last index");
-
-
-
-                            } else if other_index == self.0.len() - 1 {
-                                println!("{:?}", self.0[index]);
-                                println!("last other index");
-                                waved += 1;
-                                break
-
-                            }
-                        };
-
-
-
-                    },
-                    Host::DydxSoloMargin => {
-                        let mut steps = 0_usize;
-                        let mut above = false;
-                        let mut fee_linked_or_waved = false;
-                        let mut disposition_linked = false;
-                        while !fee_linked_or_waved || !disposition_linked {
-                            if above {
-                                above = false;
-                            } else {
-                                steps += 1;
-                                above = true;
-                            }
-
-                            let other_index = if above {
-                                std::cmp::min(self.0.len() - 1, index + steps)
-                            } else {
-                                if steps < index {
-                                    index - steps 
-                                } else {
-                                    0
-                                }
-                            };
-                            if !fee_linked_or_waved {
-                                if self.0[other_index].ilk == Ilk::TradeFee && self.0[other_index].identifier == self.0[index].identifier {
-                                    assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].direction == Direction::Out);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    fee_linked_or_waved = true;
-                                } else if self.0[other_index].timestamp != self.0[index].timestamp {
-                                    fee_linked_or_waved = true;
-                                    waved += 1;
-                                }
-                            }
-                            if !disposition_linked {
-                                if self.0[other_index].ilk == Ilk::Match && self.0[other_index].identifier == self.0[index].identifier {
-                                    assert!(self.0[other_index].timestamp == self.0[index].timestamp);
-                                    assert!(self.0[other_index].linked_to.len() == 0);
-                                    self.0[other_index].linked_to.push(index);
-                                    links += 1; 
-                                    self.0[index].linked_to.push(other_index);
-                                    links += 1; 
-                                    disposition_linked = true;
-                                }
-                            }
-                        };
-                    },
-                }
-            }
-        }
-        // println!("same_id: {}, close_timestamp: {}, waved: {}", same_id, close_timestamp, waved);
-        println!("trade links added: {}, waved: {}",links, waved);
     }
 
     pub fn used_assets(&self) -> Vec<String> {
         let mut uas = Vec::new();
         for delta in &self.0 {
-            if delta.asset.starts_with("UNI-V3-LIQUIDITY") {
-                continue
-            };
-            if delta.asset.starts_with("UNI-V4-LIQUIDITY") {
+            if is_uni_cl_position(&delta.asset) {
                 continue
             };
             if !uas.contains(&delta.asset) {
@@ -1340,84 +47,276 @@ impl Deltas {
         uas
     }
 
-    pub fn disposition_links(&self) {
-        let mut zero = 0;
-        let mut one = 0;
-        let mut two = 0;
-
-        let mut unlinked = HashSet::new();
-        let mut unlinked_map = HashMap::new();
+    /// Groups all deltas into DeltaGroups and returns a LinkedDeltas.
+    ///
+    /// Ins-first algorithm:
+    /// Step 1: Separate Ins and Outs, group Ins by identifier
+    /// Step 2: Build indexes on In groups
+    /// Step 3: Place each Out into the best matching In group
+    /// Step 4: Collect, sort by timestamp
+    pub fn link(&self) -> LinkedDeltas {
+        // Step 1: Separate Ins and Outs, group Ins by identifier
+        let mut groups: HashMap<String, DeltaGroup> = HashMap::new();
+        let mut outs: Vec<Delta> = Vec::new();
 
         for delta in &self.0 {
-            if delta.direction == Direction::Out {
-                if delta.linked_to.len() == 0 {
-                    unlinked.insert(delta.ilk.clone());
-                    if 
-                        delta.ilk != Ilk::UnwrapEth && 
-                        delta.ilk != Ilk::WrapEth && 
-                        delta.ilk != Ilk::WithdrawalToBank &&
-                        delta.ilk != Ilk::WithdrawalFee &&
-                        delta.ilk != Ilk::ChangeMakerVault 
-                            {
-                        if unlinked_map.contains_key(&delta.asset) {
-                            *unlinked_map.get_mut(&delta.asset).unwrap() += delta.qty;
-                        } else {
-                            unlinked_map.insert(delta.asset.clone(), delta.qty);
-                        };
-                    }
-                    // println!("{:?}", delta);
-                    zero += 1;
-                } else if delta.linked_to.len() == 1 {
-                    one += 1;
-                } else if delta.linked_to.len() == 2 {
-                    two += 1;
-                } else {
-                    panic!("");
+            match delta.direction {
+                Direction::In => {
+                    groups.entry(delta.identifier.clone())
+                        .or_insert_with(|| DeltaGroup { ins: Vec::new(), outs: Vec::new() })
+                        .ins.push(delta.clone());
+                }
+                Direction::Out => outs.push(delta.clone()),
+            }
+        }
+        let in_count = self.0.len() - outs.len();
+        println!("  step 1: {} ins grouped into {} groups, {} outs to place", in_count, groups.len(), outs.len());
+
+        // Step 2: Build indexes on In groups
+        let mut sorted_identifiers: Vec<String> = groups.keys().cloned().collect();
+        sorted_identifiers.sort();
+
+        let mut in_by_timestamp: HashMap<u64, Vec<String>> = HashMap::new();
+        let mut in_account_ilk_index: HashMap<(String, Ilk), Vec<(String, u64)>> = HashMap::new();
+        let mut kucoin_match_index: Vec<(String, u64)> = Vec::new();
+        let mut dydx_deposit_by_account: HashMap<String, Vec<String>> = HashMap::new();
+
+        for (id, g) in &groups {
+            for d in &g.ins {
+                in_by_timestamp.entry(d.timestamp).or_default().push(id.clone());
+                in_account_ilk_index.entry((d.account.clone(), d.ilk.clone())).or_default()
+                    .push((id.clone(), d.timestamp));
+                if d.ilk == Ilk::Match && d.host == Host::Kucoin {
+                    kucoin_match_index.push((id.clone(), d.timestamp));
+                }
+                if d.ilk == Ilk::DydxDeposit {
+                    dydx_deposit_by_account.entry(d.account.clone()).or_default().push(id.clone());
                 }
             }
         }
-        println!("disposition_links: zero: {}, one: {}. two: {}", zero, one, two);
-        println!("unlinked types: {:?}", unlinked);
-        println!("unlinked totals: {:#?}", unlinked_map);
+
+        // Step 3: Place each Out into an In group via passes
+        let mut pass_a_count = 0u64;
+        let mut pass_b_count = 0u64;
+        let mut pass_c_count = 0u64;
+        let mut pass_d_count = 0u64;
+        let mut pass_e_count = 0u64;
+        let mut pass_f_count = 0u64;
+        let mut unmatched_outs: Vec<Delta> = Vec::new();
+
+        for out in outs {
+            let id = out.identifier.clone();
+
+            // Pass A: exact identifier match
+            if let Some(group) = groups.get_mut(&id) {
+                group.outs.push(out);
+                pass_a_count += 1;
+                continue;
+            }
+
+            // Pass B: prefix match (out identifier is prefix of in identifier)
+            {
+                let prefix = id.as_str();
+                let idx = sorted_identifiers.partition_point(|s| s.as_str() < prefix);
+                if idx < sorted_identifiers.len()
+                    && sorted_identifiers[idx].starts_with(prefix)
+                    && sorted_identifiers[idx] != id
+                {
+                    let target = sorted_identifiers[idx].clone();
+                    groups.get_mut(&target).unwrap().outs.push(out);
+                    pass_b_count += 1;
+                    continue;
+                }
+            }
+
+            // Pass C: account-based matching for gas/fail types
+            // Find nearest later In of corresponding success Ilk on same account
+            // Try each target ilk in order; first match wins
+            {
+                let target_ilks: &[Ilk] = match out.ilk {
+                    Ilk::SwapFailGas => &[Ilk::Swap, Ilk::ManageLiquidity],
+                    Ilk::ManageLiquidityFailGas => &[Ilk::ManageLiquidity],
+                    Ilk::EmptyTransaction => &[Ilk::Swap, Ilk::ManageLiquidity],
+                    Ilk::ApproveFailGas => &[Ilk::Swap, Ilk::ManageLiquidity],
+                    Ilk::WrapEthFailGas => &[Ilk::Swap, Ilk::ManageLiquidity],
+                    Ilk::UnwrapEthFailGas => &[Ilk::Swap, Ilk::ManageLiquidity],
+                    _ => &[],
+                };
+
+                let mut pass_c_target: Option<String> = None;
+                for ilk in target_ilks {
+                    let key = (out.account.clone(), ilk.clone());
+                    pass_c_target = in_account_ilk_index.get(&key)
+                        .and_then(|candidates| {
+                            candidates.iter()
+                                .filter(|(_, ts)| *ts >= out.timestamp)
+                                .min_by_key(|(_, ts)| *ts - out.timestamp)
+                                .map(|(cid, _)| cid.clone())
+                        });
+                    if pass_c_target.is_some() { break; }
+                }
+                if let Some(target_id) = pass_c_target {
+                    groups.get_mut(&target_id).unwrap().outs.push(out);
+                    pass_c_count += 1;
+                    continue;
+                }
+            }
+
+            // Pass D: same timestamp (PayMinerDireclty/PayMinerDirecltyGas → Swap In)
+            if out.ilk == Ilk::PayMinerDireclty || out.ilk == Ilk::PayMinerDirecltyGas {
+                let target_id = in_by_timestamp.get(&out.timestamp)
+                    .and_then(|candidates| {
+                        candidates.iter()
+                            .find(|cid| {
+                                groups.get(*cid).map_or(false, |g| g.ins.iter().any(|d| d.ilk == Ilk::Swap))
+                            })
+                            .cloned()
+                    });
+                if let Some(tid) = target_id {
+                    groups.get_mut(&tid).unwrap().outs.push(out);
+                    pass_d_count += 1;
+                    continue;
+                }
+            }
+
+            // Pass E: Kucoin tolerance (TradeFee → Match within progressive tolerance)
+            if out.ilk == Ilk::TradeFee && out.host == Host::Kucoin {
+                let mut target_id: Option<String> = None;
+                for tolerance_secs in &[1u64, 5, 10, 60] {
+                    let tolerance = tolerance_secs * 1000;
+                    target_id = kucoin_match_index.iter()
+                        .filter(|(kid, ts)| {
+                            let diff = if *ts >= out.timestamp { *ts - out.timestamp } else { out.timestamp - *ts };
+                            diff <= tolerance
+                                && groups.get(kid).map_or(false, |g| !g.outs.iter().any(|d| d.ilk == Ilk::TradeFee))
+                        })
+                        .min_by_key(|(_, ts)| {
+                            if *ts >= out.timestamp { *ts - out.timestamp } else { out.timestamp - *ts }
+                        })
+                        .map(|(kid, _)| kid.clone());
+                    if target_id.is_some() { break; }
+                }
+                if let Some(tid) = target_id {
+                    groups.get_mut(&tid).unwrap().outs.push(out);
+                    pass_e_count += 1;
+                    continue;
+                }
+            }
+
+            // Pass F: DydxWithdraw by account
+            if out.ilk == Ilk::DydxWithdraw {
+                let target_id = dydx_deposit_by_account.get(&out.account)
+                    .and_then(|candidates| {
+                        candidates.iter()
+                            .find(|did| groups.contains_key(*did))
+                            .cloned()
+                    });
+                if let Some(tid) = target_id {
+                    groups.get_mut(&tid).unwrap().outs.push(out);
+                    pass_f_count += 1;
+                    continue;
+                }
+            }
+
+            // Pass G: unmatched
+            unmatched_outs.push(out);
+        }
+
+        println!("  pass A: placed {} outs by exact identifier", pass_a_count);
+        println!("  pass B: placed {} outs by prefix match", pass_b_count);
+        println!("  pass C: placed {} outs by account match", pass_c_count);
+        println!("  pass D: placed {} outs by same timestamp", pass_d_count);
+        println!("  pass E: placed {} outs by kucoin tolerance", pass_e_count);
+        println!("  pass F: placed {} outs by dydx account", pass_f_count);
+        println!("  unmatched: {} outs in standalone groups", unmatched_outs.len());
+
+        for out in &unmatched_outs {
+            println!("    unmatched: {:?} {:?} {} {} {}", out.ilk, out.host, out.asset, out.qty, out.identifier);
+            assert!(matches!(out.ilk,
+                Ilk::ApproveGas
+                | Ilk::BridgeFee
+                | Ilk::BridgeGas
+                | Ilk::CoinbaseCalculationDiscrepancy
+                | Ilk::CoinbaseDepositGas
+                | Ilk::CoinbaseDiscovery
+                | Ilk::DelegateGas
+                | Ilk::DepositDiscrepancy
+                | Ilk::Erc20TransferFailGas
+                | Ilk::Loss
+                | Ilk::MalformedTxGas
+                | Ilk::ManageLiquidityFailGas
+                | Ilk::ManageLiquidityGas
+                | Ilk::Payment
+                | Ilk::PaymentGas
+                | Ilk::RewardClaimFailGas
+                | Ilk::SwapFailGas
+                | Ilk::WalletToWalletGas
+                | Ilk::WithdrawalFee
+                | Ilk::WithdrawalToBank
+            ), "out should have matched an in but ended up stranded: {:?} {:?} {} {}",
+                out.ilk, out.host, out.asset, out.identifier);
+        }
+
+        // Step 4: Collect and sort
+        let mut result: Vec<DeltaGroup> = groups.into_values().collect();
+        result.extend(unmatched_outs.into_iter().map(|out| DeltaGroup { ins: vec![], outs: vec![out] }));
+        result.sort_by_key(|g| g.timestamp());
+
+        for group in &result {
+            assert!(group.ins.len() <= 2,
+                "group with {} ins: {:?}", group.ins.len(), group.ins);
+            if group.ins.len() == 2 {
+                assert!(group.ins.iter().all(|d|
+                    d.ilk == Ilk::ManageLiquidity || d.ilk == Ilk::RemoveLiquidity || d.ilk == Ilk::SwapFees),
+                    "2-in group with non-liquidity ilks: {:?}", group.ins);
+            }
+        }
+
+        LinkedDeltas(result)
+    }
+}
+
+/// A group of related deltas from the same transaction/event.
+/// Ins are acquisitions, Outs are dispositions/fees that support the Ins.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeltaGroup {
+    pub ins: Vec<Delta>,
+    pub outs: Vec<Delta>,
+}
+
+impl DeltaGroup {
+    /// Latest timestamp in the group (i.e. the In's timestamp), used for
+    /// chronological sorting. The In is the anchor event; earlier Outs
+    /// (like fail gas) fold into its cost basis at this time.
+    pub fn timestamp(&self) -> u64 {
+        self.ins.iter().chain(self.outs.iter())
+            .map(|d| d.timestamp)
+            .max()
+            .unwrap_or(0)
     }
 
+    /// All deltas in the group, ins first then outs
+    pub fn all_deltas(&self) -> impl Iterator<Item = &Delta> {
+        self.ins.iter().chain(self.outs.iter())
+    }
 
-    // pub fn acquisitions_that_need_link(&self) {
-
-
-    //     let mut total = 0;
-    //     let mut unlinked = 0;
-    //     for delta in &self.0 {
-    //         if delta.is_aquisition_that_needs_link() {
-    //             total += 1;
-    //             if delta.linked_to.len() == 0 {
-    //                 println!("{:?}", delta); 
-    //                 unlinked += 1;
-    //             }
-    //         }
-    //     }
-    //     println!("{} unlinked of {} total", unlinked, total);
-    // }
-
-
-    pub fn index_cost (&self, index: usize, quote_currency: &str, prices: &prices::Prices) -> f64 {
-
-        let delta = &self.0[index];
+    /// Cost basis for an In delta = sum of related Out values.
+    /// Replicates the logic from the old index_cost.
+    pub fn cost_for(&self, delta: &Delta, quote_currency: &str, prices: &prices::Prices) -> f64 {
         assert!(delta.direction == Direction::In);
 
-        let cost = if delta.asset == quote_currency {
-
-            // delta.value(quote_currency, prices)
+        if delta.asset == quote_currency {
             0.0
         } else if delta.ilk == Ilk::RemoveLiquidity {
             delta.value(quote_currency, prices)
-        } else if delta.ilk == Ilk::ManageLiquidity && !delta.asset.starts_with("UNI-V3-LIQUIDITY") {
+        } else if delta.ilk == Ilk::ManageLiquidity && !is_uni_cl_position(&delta.asset) {
+            // Token deposited into a CL position — cost is the token's value
+            // plus any gas fees linked to it (but not the position asset itself).
             let mut c = delta.value(quote_currency, prices);
-            for index in &delta.linked_to {
-                if !self.0[*index].asset.starts_with("UNI-V3-LIQUIDITY") {
-                    assert!(self.0[*index].ilk == Ilk::ManageLiquidityGas || self.0[*index].ilk == Ilk::ManageLiquidityFailGas);
-                    assert!(self.0[*index].direction == Direction::Out);
-                    c += self.0[*index].value(quote_currency, prices)
+            for out in &self.outs {
+                if !is_uni_cl_position(&out.asset) && (out.ilk == Ilk::ManageLiquidityGas || out.ilk == Ilk::ManageLiquidityFailGas) {
+                    assert!(out.direction == Direction::Out);
+                    c += out.value(quote_currency, prices);
                 }
             }
             c
@@ -1428,35 +327,19 @@ impl Deltas {
             assert!(delta.asset == "ETH");
             delta.value(quote_currency, prices)
         } else if delta.ilk == Ilk::Airdrop {
-
             let mut c = delta.value(quote_currency, prices);
-            for index in &delta.linked_to {
-                c += self.0[*index].value(quote_currency, prices)
+            for out in &self.outs {
+                c += out.value(quote_currency, prices);
             }
             c
         } else if delta.ilk == Ilk::SwapFees {
             0.0
-
-            // let mut c = delta.value(quote_currency, prices);
-            // for index in &delta.linked_to {
-            //     c += self.0[*index].value(quote_currency, prices)
-            // }
-            // c
-
         } else {
             let mut c = 0f64;
-            for index in &delta.linked_to {
-                assert!(self.0[*index].direction == Direction::Out);
-                c += self.0[*index].value(quote_currency, prices);
-                
+            for out in &self.outs {
+                assert!(out.direction == Direction::Out);
+                c += out.value(quote_currency, prices);
             }
-
-
-            //////////2021TEST////////////////////
-            // if index % 4 == 0 || index % 7 == 0 {
-            //     c *= 1.0031
-            // }
-            //////////2021TEST////////////////////
 
             //////////2023TEST////////////////////
             if delta.timestamp % 7000 == 0 && delta.timestamp < 1704067200000 && delta.timestamp >= 1672531200000 {
@@ -1469,153 +352,140 @@ impl Deltas {
                 c *= 1.00087
             }
             //////////2024TEST////////////////////
-            
 
             c
-
-        };
-        cost
+        }
     }
 
-    pub fn index_income (&self, index: usize, quote_currency: &str, prices: &prices::Prices) -> f64 {
-        let delta = &self.0[index];
+    /// Income for an In delta (airdrops, staking, etc.)
+    pub fn income_for(&self, delta: &Delta, quote_currency: &str, prices: &prices::Prices) -> f64 {
         assert!(delta.direction == Direction::In);
-        let income = if delta.ilk == Ilk::Airdrop {
-            // dbg!(format!("airdrop: {}, {}", chrono::Utc.timestamp_millis(self.0[index].timestamp as i64), delta.value(quote_currency, prices));
+        if delta.ilk == Ilk::Airdrop {
             delta.value(quote_currency, prices)
         } else if delta.ilk == Ilk::TradeFee && delta.direction == Direction::In {
             delta.value(quote_currency, prices)
-            // 0_f64
-        // } else if delta.ilk == Ilk::SwapFees && delta.direction == Direction::In {
-        //     delta.value(quote_currency, prices)
-        //     // 0_f64
         } else {
             0_f64
-        };
-        income
+        }
     }
 
-    pub fn index_revenue(&self, index: usize, quote_currency: &str, prices: &prices::Prices) -> f64 {
-        // if &self.0[index].asset == "UNI-V3-LIQUIDITY:494643_WETH_ARB_500_73280_73340" {
-        //     dbg!();
-        // }
-        let delta = &self.0[index];
+    /// Revenue for an Out delta = value of the disposition, potentially
+    /// adjusted by linked In values (e.g. when sold for quote currency).
+    pub fn revenue_for(&self, delta: &Delta, quote_currency: &str, prices: &prices::Prices) -> f64 {
         assert!(delta.direction == Direction::Out);
 
-        
-        
-        let rev = if delta.asset == quote_currency {
-            // delta.value(quote_currency, prices)
+        if delta.asset == quote_currency {
             0.0
-            
-
         } else if delta.ilk == Ilk::RemoveLiquidity {
             let mut c = 0f64;
-            for index in &delta.linked_to {
-                c += self.0[*index].value(quote_currency, prices)
+            for in_delta in &self.ins {
+                c += in_delta.value(quote_currency, prices);
             }
             c
-        } else if delta.ilk == Ilk::ManageLiquidity && delta.asset.starts_with("UNI-V3-LIQUIDITY") {
-            // dbg!(delta.linked_to.len());
+        } else if delta.ilk == Ilk::ManageLiquidity && is_uni_cl_position(&delta.asset) {
+            // Removing a CL position — revenue is the value of the tokens
+            // received back (the linked ManageLiquidity In deltas).
             let mut c = 0f64;
-            for index in &delta.linked_to {
-                assert!(self.0[*index].ilk == Ilk::ManageLiquidity);
-                assert!(self.0[*index].direction == Direction::In);
-                c += self.0[*index].value(quote_currency, prices)
+            for in_delta in &self.ins {
+                assert!(in_delta.ilk == Ilk::ManageLiquidity);
+                assert!(in_delta.direction == Direction::In);
+                c += in_delta.value(quote_currency, prices);
             }
             c
         } else {
             let mut r = delta.value(quote_currency, prices);
-            for i in &delta.linked_to {
-                if i < &self.0.len() && self.0[*i].asset == quote_currency && self.0[*i].direction == Direction::In {
-                    // panic!("");
-
-                    r = self.0[*i].qty;
+            // Check if there's a quote-currency In (e.g. sold for USD)
+            for in_delta in &self.ins {
+                if in_delta.asset == quote_currency && in_delta.direction == Direction::In {
+                    r = in_delta.qty;
                 }
             }
-            for i in &delta.linked_to {
-                if i < &self.0.len() && self.0[*i].asset == quote_currency && self.0[*i].direction == Direction::Out {
-                    assert!(self.0[*i].ilk == Ilk::TradeFee);
-                    r -= self.0[*i].qty;
+            // Subtract quote-currency TradeFee outs
+            for out in &self.outs {
+                if out.asset == quote_currency && out.direction == Direction::Out {
+                    assert!(out.ilk == Ilk::TradeFee);
+                    r -= out.qty;
                 }
             }
             r
-        };
-        rev
+        }
+    }
+}
+
+
+/// Linked deltas, sorted chronologically.
+/// Replaces the old Deltas wrapper with its linked_to index system.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinkedDeltas(pub Vec<DeltaGroup>);
+
+impl LinkedDeltas {
+    pub fn load(path: &str) -> Result<Self, Box<dyn Error>> {
+        let data = std::fs::read_to_string(path)?;
+        let groups: Vec<DeltaGroup> = serde_json::from_str(&data)?;
+        Ok(Self(groups))
     }
 
-    pub fn link_unused_kucoin_fees_within(&mut self, tolerance: u64) {
+    pub fn save(&self, path: &str) -> Result<(), Box<dyn Error>> {
+        let json_string = serde_json::to_string(&self.0)?;
+        std::fs::write(path, &json_string)?;
+        Ok(())
+    }
 
-        let mut links = 0;
-        let mut waved = 0;
-        for index in 0..self.0.len() {
-
-            if self.0[index].ilk == Ilk::Match && self.0[index].host == Host::Kucoin && self.0[index].linked_to.len() == 1 && self.0[index].direction == Direction::In {
-
-                let mut steps = 0_usize;
-                let mut above = false;
-                let mut fee_linked_or_waved = false;
-                while !fee_linked_or_waved {
-                    if above {
-                        above = false;
-                    } else {
-                        steps += 1;
-                        above = true;
-                    }
-
-                    let other_index = if above {
-                        std::cmp::min(self.0.len() - 1, index + steps)
-                    } else {
-                        if steps < index {
-                            index - steps 
-                        } else {
-                            0
-                        }
-                    };
-                    if !fee_linked_or_waved {
-
-                        
-                        if above && self.0[other_index].timestamp - self.0[index].timestamp > tolerance*1000 {
-                            // println!("{:?}", self.0[index]);
-                            fee_linked_or_waved = true;
-
-                            waved += 1;
-                        } else if !above && self.0[index].timestamp - self.0[other_index].timestamp > tolerance*1000 {
-                            // println!("{:?}", self.0[index]);
-                            fee_linked_or_waved = true;
-                            waved += 1;
-                        } else if (
-                            self.0[other_index].ilk == Ilk::TradeFee && 
-                            self.0[other_index].host == Host::Kucoin &&
-                            self.0[other_index].linked_to.len() == 0 
-                            ){
-                            self.0[other_index].linked_to.push(index);
-                            links += 1; 
-                            self.0[index].linked_to.push(other_index);
-                            links += 1; 
-                            fee_linked_or_waved = true;
-                        }
-                        
-                    }
-                    if index == self.0.len() - 1{
-                        println!("last index");
-
-
-
-                    } else if other_index == self.0.len() - 1 {
-                        println!("{:?}", self.0[index]);
-                        println!("last other index");
-                        waved += 1;
-                        break
-
-                    }
+    pub fn used_assets(&self) -> Vec<String> {
+        let mut uas = Vec::new();
+        for group in &self.0 {
+            for delta in group.all_deltas() {
+                if is_uni_cl_position(&delta.asset) {
+                    continue
                 };
-
-
+                if !uas.contains(&delta.asset) {
+                    uas.push(delta.asset.clone());
+                }
             }
         }
+        uas
+    }
 
-        println!("tolerance: {}, added: {}, waved: {}", tolerance, links, waved);
+    /// Reassign quote-currency trade fees from the In side to the Out side of their group.
+    /// When a Match In is in the quote currency, its TradeFee should reduce the Out's revenue
+    /// rather than increase the In's cost.
+    pub fn reassign_quote_fee_links(&mut self, quote_currency: &str) {
+        // This is handled naturally by the group structure now.
+        // In a group, if the Match In is in quote_currency, the revenue_for
+        // on the Out side already subtracts TradeFee outs in quote_currency.
+        // No reassignment needed with the new structure.
+        println!("reassign_quote_fee_links: handled by group structure");
+    }
+
+    /// Diagnostic: show disposition link counts
+    pub fn disposition_links(&self) {
+        let mut zero = 0;
+        let mut linked = 0;
+        let mut unlinked_map = HashMap::new();
+        let mut unlinked_types = HashSet::new();
+
+        for group in &self.0 {
+            for out in &group.outs {
+                // An Out is "linked" if there's at least one In in its group
+                if group.ins.is_empty() {
+                    if out.ilk != Ilk::UnwrapEth
+                        && out.ilk != Ilk::WrapEth
+                        && out.ilk != Ilk::WithdrawalToBank
+                        && out.ilk != Ilk::WithdrawalFee
+                        && out.ilk != Ilk::ChangeMakerVault
+                    {
+                        *unlinked_map.entry(out.asset.clone()).or_insert(0.0) += out.qty;
+                    }
+                    unlinked_types.insert(out.ilk.clone());
+                    zero += 1;
+                } else {
+                    linked += 1;
+                }
+            }
+        }
+        println!("disposition_links: unlinked: {}, linked: {}", zero, linked);
+        println!("unlinked types: {:?}", unlinked_types);
+        println!("unlinked totals: {:#?}", unlinked_map);
     }
 }
 
@@ -1630,6 +500,7 @@ pub struct Delta {
     pub host: Host,
     pub account: String,
     pub identifier: String,
+    #[serde(default)]
     pub linked_to: Vec<usize>
 }
 
@@ -1659,7 +530,7 @@ pub enum Direction {
 
 #[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub enum Host {
-    Mainnet, 
+    Mainnet,
     Optimism,
     Base,
     Optimism10,
@@ -1796,6 +667,7 @@ pub enum Ilk {
     ManageLiquidityFailGas,
     ManageLiquidity,
     SwapFees,
+    SwapRefund,
     WalletDiscovery,
     PhishingAttempt,
     Loan,
@@ -1809,5 +681,3 @@ pub enum Ilk {
     RewardClaimGas,
     RewardClaimFailGas,
 }
-
-

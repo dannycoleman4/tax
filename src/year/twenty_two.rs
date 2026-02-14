@@ -15,11 +15,11 @@ pub fn calculate(method: inventory::InventoryMethod) {
     inventory.add_asset("ETHW");
     // let mut inventory = inventory::Inventory::load("./2022/initial_inventory_us.json").unwrap();
     let prices = prices::Prices::load("./data/2022/prices_USD.json").unwrap();
-    let mut deltas = deltas::Deltas::load("./data/2022/linked_deltas.json").unwrap();
-    deltas.reassign_quote_fee_links("USD");
+    let mut linked = deltas::LinkedDeltas::load("./data/2022/linked_deltas.json").unwrap();
+    linked.reassign_quote_fee_links("USD");
 
-    let (summary, dispositions) = inventory.apply_deltas(&deltas, "USD", &prices, method);
-    
+    let (summary, dispositions) = inventory.apply_deltas(&linked, "USD", &prices, method);
+
     // summary.save("./2022/summary_us.json");
     inventory.save("./data/2022/end_inventory_us.json");
 
@@ -29,7 +29,7 @@ pub fn calculate(method: inventory::InventoryMethod) {
     let mut report = String::new();
     report += "\n";
     report += "all values in USD\n";
-    report += "day average (hourly vwap) prices from cryptocompare.com used to determine fair market value\n"; 
+    report += "day average (hourly vwap) prices from cryptocompare.com used to determine fair market value\n";
     report += "\n";
 
     report += "2022 cryptocurrency income (\"airdrops\"):\n";
@@ -86,7 +86,7 @@ pub fn load_initial_inventory_us() -> inventory::Inventory {
             panic!("");
         }
     }
-    
+
     initial_inventory
 }
 
@@ -125,7 +125,7 @@ pub fn check_end_inventory() {
             panic!("");
         }
     }
-    
+
 }
 
 pub fn save_USD_prices() {
@@ -145,48 +145,34 @@ pub fn save_USD_prices() {
 
 
 pub fn save_linked_deltas() {
-    let mut deltas = deltas::Deltas::load("./data/2022/unlinked_deltas.json").unwrap();
-    deltas.link_airdrop_components(); 
-    deltas.link_swap_components(); 
-    // deltas.link_miner_direct_payment();
-    deltas.link_trade_components();
-    deltas.link_conversion_components();
-    //ndeltas.link_remove_liquidity_components();
-    // deltas.link_dydx_deposits_and_withdraws();
-    deltas.link_swap_fail_gas(std::time::Duration::from_secs(7*24*3600));
-    // deltas.link_tx_cancel(std::time::Duration::from_secs(7*24*3600));
-    deltas.save("./data/2022/linked_deltas.json").unwrap();
+    let deltas = deltas::Deltas::load("./data/2022/unlinked_deltas.json").unwrap();
+    let linked = deltas.link();
+    linked.save("./data/2022/linked_deltas.json").unwrap();
     check_linked_deltas();
 }
 
 pub fn check_linked_deltas() {
-    let deltas = deltas::Deltas::load("./data/2022/linked_deltas.json").unwrap();
-
-    for delta in &deltas.0 {
-        if delta.ilk == deltas::Ilk::TradeFee || delta.ilk == deltas::Ilk::SwapGas || delta.ilk == deltas::Ilk::SwapFailGas {
-            assert!(delta.linked_to.len() < 2);
-        }
-    }
-    acquisitions_that_need_link(&deltas);
-    deltas.disposition_links();
+    let linked = deltas::LinkedDeltas::load("./data/2022/linked_deltas.json").unwrap();
+    acquisitions_that_need_link(&linked);
+    linked.disposition_links();
 }
 
 
 fn is_trade_fee_rebate(delta: &deltas::Delta) -> bool {
-    delta.ilk == deltas::Ilk::TradeFee 
-        && delta.direction == deltas::Direction::In 
+    delta.ilk == deltas::Ilk::TradeFee
+        && delta.direction == deltas::Direction::In
         && delta.host == deltas::Host::FtxUs
 }
 
 fn is_aquisition_that_needs_link(delta: &deltas::Delta) -> bool {
     if (
-        delta.direction == deltas::Direction::In 
-        && delta.ilk != deltas::Ilk::WrapEth 
-        && delta.ilk != deltas::Ilk::UnwrapEth 
-        // && delta.ilk != deltas::Ilk::TokenMigration 
-        && delta.ilk != deltas::Ilk::ChangeMakerVault 
-        && delta.ilk != deltas::Ilk::DepositDiscrepancy 
-        && delta.ilk != deltas::Ilk::BridgeFeeRefund 
+        delta.direction == deltas::Direction::In
+        && delta.ilk != deltas::Ilk::WrapEth
+        && delta.ilk != deltas::Ilk::UnwrapEth
+        // && delta.ilk != deltas::Ilk::TokenMigration
+        && delta.ilk != deltas::Ilk::ChangeMakerVault
+        && delta.ilk != deltas::Ilk::DepositDiscrepancy
+        && delta.ilk != deltas::Ilk::BridgeFeeRefund
         && !is_trade_fee_rebate(delta)
         && &delta.identifier != "Ftxus_2022Q3_inferred_credit_1"
         ) {
@@ -197,18 +183,18 @@ fn is_aquisition_that_needs_link(delta: &deltas::Delta) -> bool {
 }
 
 
-fn acquisitions_that_need_link(deltas: &deltas::Deltas) {
-
+fn acquisitions_that_need_link(linked: &deltas::LinkedDeltas) {
 
     let mut total = 0;
     let mut unlinked = 0;
-    for delta in &deltas.0 {
-        if is_aquisition_that_needs_link(delta) {
-            total += 1;
-            if delta.linked_to.len() == 0 {
-                println!("needs link: {:#?}", delta); 
-                unlinked += 1;
-
+    for group in &linked.0 {
+        for delta in &group.ins {
+            if is_aquisition_that_needs_link(delta) {
+                total += 1;
+                if group.outs.is_empty() && group.ins.len() == 1 {
+                    println!("needs link: {:#?}", delta);
+                    unlinked += 1;
+                }
             }
         }
     }
