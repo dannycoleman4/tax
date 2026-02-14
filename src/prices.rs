@@ -123,8 +123,8 @@ impl Prices {
                 cg_id, from_unix, to_unix
             );
 
-            let resp = match ureq::get(&url)
-                .set("x-cg-pro-api-key", api_key)
+            let mut resp = match ureq::get(&url)
+                .header("x-cg-pro-api-key", api_key)
                 .call()
             {
                 Ok(r) => r,
@@ -134,7 +134,7 @@ impl Prices {
                 }
             };
 
-            let body: serde_json::Value = serde_json::from_str(&resp.into_string()?)?;
+            let body: serde_json::Value = serde_json::from_str(&resp.body_mut().read_to_string()?)?;
             let prices_arr = match body["prices"].as_array() {
                 Some(arr) => arr,
                 None => {
